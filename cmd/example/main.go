@@ -1,65 +1,17 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"log"
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	dbcache "github.com/transactrx/db-cache/pkg/db-cache"
+	snowflakecache "github.com/transactrx/db-cache/pkg/snowflake-cache"
 )
 
 // ApiKey2 type is defined in apiKeyModel.go
 
-// Example usage for PostgreSQL
-func postgresExample() {
-	// Initialize read and read-write database pools
-	readPool, err := pgxpool.New(context.Background(), "postgres://user:password@readOnlyHost:5432/prod")
-	if err != nil {
-		log.Panicf("Could not create read database pool: %v", err)
-	}
-	defer readPool.Close()
-
-	rwPool, err := pgxpool.New(context.Background(), "postgres://user:password@readWriteHost:5432/prod")
-	if err != nil {
-		log.Panicf("Could not create read-write database pool: %v", err)
-	}
-	defer rwPool.Close()
-
-	// Create cache using the unified API
-	// For PostgreSQL, pass *pgxpool.Pool for both DB and DB_RW
-	keyCache, err := dbcache.CreateCache[ApiKey2](
-		nil, // logger (nil uses default)
-		"SELECT key, description, configuration, name, max_daily_rate, volumes, client_id as clientid FROM api_keys",
-		[]string{"api_keys"}, // monitored tables
-		"Key",                // key field name
-		time.Second*43,       // check interval
-		readPool,             // read database connection
-		rwPool,               // read-write database connection (for triggers)
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	// Use the cache
-	result := keyCache.Get("someid")
-	if result != nil {
-		log.Printf("Found in cache: %v", result)
-	} else {
-		log.Printf("Value not found in cache!")
-	}
-
-	// Get all values
-	allKeys := keyCache.GetAll()
-	log.Printf("Total keys in cache: %d", len(allKeys))
-
-	// Force refresh if needed
-	if err := keyCache.ForceRefresh(); err != nil {
-		log.Printf("Error refreshing cache: %v", err)
-	}
-}
+// Note: PostgreSQL support has been removed. This package is now Snowflake-only.
 
 // Example usage for Snowflake
 func snowflakeExample() {
@@ -73,7 +25,7 @@ func snowflakeExample() {
 
 	// For Snowflake: pass "DATABASE.SCHEMA" format as the DB_RW parameter
 	// This tells the library where to find the TABLE_LOG for cache invalidation
-	cache, err := dbcache.CreateCache[ApiKey2](
+	cache, err := snowflakecache.CreateCache[ApiKey2](
 		nil, // logger (nil uses default)
 		`SELECT 
 			KEY AS "key", 
@@ -94,7 +46,7 @@ func snowflakeExample() {
 		panic(err)
 	}
 
-	// Use the cache (same API as PostgreSQL!)
+	// Use the cache
 	result := cache.Get("someid")
 	if result != nil {
 		log.Printf("Found in cache: %v", result)
@@ -114,14 +66,9 @@ func main() {
 	case "snowflake":
 		log.Println("Running Snowflake example...")
 		snowflakeExample()
-	case "postgres":
-		log.Println("Running PostgreSQL example...")
-		postgresExample()
 	default:
-		log.Println("Usage: Set DB_BACKEND environment variable to 'postgres' or 'snowflake'")
-		log.Println("Example: DB_BACKEND=postgres go run main.go")
-		log.Println("\nBoth examples use the same dbcache.CreateCache API!")
-		log.Println("The library automatically detects whether you're using PostgreSQL or Snowflake")
-		log.Println("based on the type of the database connection you pass.")
+		log.Println("Usage: Set DB_BACKEND environment variable to 'snowflake'")
+		log.Println("Example: DB_BACKEND=snowflake go run main.go")
+		log.Println("\nThis package is Snowflake-only and uses snowflakecache.CreateCache API!")
 	}
 }

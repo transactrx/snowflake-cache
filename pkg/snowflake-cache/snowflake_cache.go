@@ -14,6 +14,14 @@ import (
 	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
+// DbCache is the public interface that defines the contract for cache operations.
+// This interface is implemented by the Snowflake cache implementation.
+type DbCache[T any] interface {
+	Get(string) []T
+	GetAll() []T
+	ForceRefresh() error
+}
+
 // SnowflakeTable identifies a table in Snowflake by schema and name.
 // It is used to list which tables should invalidate the cache when they change.
 type SnowflakeTable struct {
@@ -21,13 +29,13 @@ type SnowflakeTable struct {
 	Table  string
 }
 
-// SnowflakeCache implements an in-memory cache backed by a Snowflake data source
+// snowflakeCache implements an in-memory cache backed by a Snowflake data source
 // and a persistent change signal stored in <signalSchema>.DB_CACHE_LOG.
 //
 // The cache periodically polls DB_CACHE_LOG to compute a staleness fingerprint.
 // If the fingerprint differs from the last seen value, it reloads the dataset
 // using the provided SQL and rebuilds an index of key -> []T.
-type DbCache[T any] struct {
+type snowflakeCache[T any] struct {
 	mutex           sync.RWMutex
 	db              any
 	keyCache        map[string][]T
@@ -42,7 +50,7 @@ type DbCache[T any] struct {
 }
 
 // Get returns the cached slice associated with the given key, or nil if missing.
-func (c *DbCache[T]) Get(key string) []T {
+func (c *snowflakeCache[T]) Get(key string) []T {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	if val, ok := c.keyCache[key]; ok {
@@ -52,7 +60,7 @@ func (c *DbCache[T]) Get(key string) []T {
 }
 
 // GetAll flattens and returns all cached rows across all keys.
-func (c *DbCache[T]) GetAll() []T {
+func (c *snowflakeCache[T]) GetAll() []T {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	var result []T
@@ -63,7 +71,7 @@ func (c *DbCache[T]) GetAll() []T {
 }
 
 // ForceRefresh clears the last fingerprint and forces a reload at once.
-func (c *DbCache[T]) ForceRefresh() error {
+func (c *snowflakeCache[T]) ForceRefresh() error {
 	c.mutex.Lock()
 	c.staleCheckVal = nil
 	c.mutex.Unlock()
@@ -77,7 +85,7 @@ func (c *DbCache[T]) ForceRefresh() error {
 
 // getDbStaleCheckValue builds and executes the fingerprint query over DB_CACHE_LOG
 // for the configured set of monitored tables.
-func (c *DbCache[T]) getDbStaleCheckValue() (*string, error) {
+func (c *snowflakeCache[T]) getDbStaleCheckValue() (*string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// Build fully-qualified TABLE_LOG reference
@@ -121,7 +129,7 @@ func (c *DbCache[T]) getDbStaleCheckValue() (*string, error) {
 
 // loadCache executes the load SQL, rebuilds the in-memory index, and
 // stores the new fingerprint.
-func (c *DbCache[T]) loadCache(staleCheckVal *string) error {
+func (c *snowflakeCache[T]) loadCache(staleCheckVal *string) error {
 	if c.staleCheckVal != nil && *c.staleCheckVal == *staleCheckVal {
 		c.logger.Printf("Cache is already up to date..")
 		return nil
@@ -149,8 +157,91 @@ func (c *DbCache[T]) loadCache(staleCheckVal *string) error {
 	return nil
 }
 
+// CreateCache creates a Snowflake-backed cache using the unified interface signature.
+// This function maintains compatibility with the original db-cache CreateCache signature
+// while being specific to Snowflake databases.
+//
+// Parameters:
+//   - logger: optional logger; when nil, a default logger to stdout is used
+//   - SQL: SELECT query to load the dataset of type T
+//   - monitoredTables: table names as "SCHEMA.TABLE" or plain "TABLE" (uses defaultSchema from DB_RW)
+//   - keyField: exported struct field name on T used as the cache key (string or *string)
+//   - cacheCheckInterval: how frequently to poll DB_CACHE_LOG for changes
+//   - DB: must be a *sql.DB connection using the gosnowflake driver
+//   - DB_RW: for Snowflake, this should be a string in "DATABASE.SCHEMA" format or just "SCHEMA"
+//   - SQLParams: optional bind parameters for the SQL query
+//
+// Returns:
+//   - DbCache[T]: the cache interface instance
+//   - error: any error encountered during cache creation
+func CreateCache[T any](
+	logger *log.Logger,
+	SQL string,
+	monitoredTables []string,
+	keyField string,
+	cacheCheckInterval time.Duration,
+	DB any,
+	DB_RW any,
+	SQLParams ...interface{},
+) (DbCache[T], error) {
+	// Validate DB is a *sql.DB (Snowflake connection)
+	sfDB, ok := DB.(*sql.DB)
+	if !ok {
+		return nil, fmt.Errorf("unsupported DB type: expected *sql.DB for Snowflake, got %T", DB)
+	}
+
+	// Parse DB_RW to extract database and schema
+	var database, defaultSchema string
+	if s, ok := DB_RW.(string); ok {
+		// Parse "DATABASE.SCHEMA" format or just "SCHEMA"
+		parts := strings.Split(s, ".")
+		if len(parts) == 2 {
+			database = parts[0]
+			defaultSchema = parts[1]
+		} else {
+			defaultSchema = s
+		}
+	} else {
+		return nil, fmt.Errorf("DB_RW must be a string for Snowflake (format: 'DATABASE.SCHEMA' or 'SCHEMA'), got %T", DB_RW)
+	}
+
+	// For backward compatibility: when only a schema is provided (no database),
+	// use "CACHE" as the log schema (where TABLE_LOG resides), not the defaultSchema.
+	// When database is provided, use defaultSchema as the log schema.
+	var logSchema string
+	if database == "" {
+		logSchema = "CACHE" // Default log schema for backward compatibility
+	} else {
+		logSchema = defaultSchema // Use the provided schema as log schema when database is specified
+	}
+
+	// Normalize monitored tables into schema/table pairs
+	qualified := make([]SnowflakeTable, 0, len(monitoredTables))
+	for _, name := range monitoredTables {
+		parts := strings.Split(name, ".")
+		if len(parts) == 2 {
+			qualified = append(qualified, SnowflakeTable{Schema: parts[0], Table: parts[1]})
+		} else {
+			qualified = append(qualified, SnowflakeTable{Schema: defaultSchema, Table: name})
+		}
+	}
+
+	// Use CreateSnowflakeCacheQualified to maintain the same behavior as CreateSnowflakeCache
+	return CreateSnowflakeCacheQualified[T](
+		logger,
+		sfDB,
+		SQL,
+		keyField,
+		cacheCheckInterval,
+		strings.ToUpper(database),
+		strings.ToUpper(logSchema),
+		qualified,
+		SQLParams...,
+	)
+}
+
 // CreateSnowflakeCache constructs and starts a Snowflake-backed cache.
-// Signature mirrors Postgres ordering to minimize migration friction.
+// This function provides a convenient way to create a cache with a default schema.
 //
 // Parameters:
 //   - logger: optional logger; when nil, a default logger to stdout is used
@@ -162,7 +253,7 @@ func (c *DbCache[T]) loadCache(staleCheckVal *string) error {
 //   - signalSchema: schema where DB_CACHE_LOG resides (e.g., "UTILS")
 //   - defaultSchema: schema applied to unqualified monitored table names
 //   - sqlParams: optional bind parameters for SQL
-func CreateCache[T any](
+func CreateSnowflakeCache[T any](
 	logger *log.Logger,
 	SQL string,
 	monitoredTables []string,
@@ -171,7 +262,7 @@ func CreateCache[T any](
 	db any,
 	defaultSchema string,
 	sqlParams ...any,
-) (*DbCache[T], error) {
+) (DbCache[T], error) {
 	if SQL == "" {
 		return nil, fmt.Errorf("loadSQL must not be empty")
 	}
@@ -213,7 +304,7 @@ func CreateCacheWithDatabase[T any](
 	database string,
 	defaultSchema string,
 	sqlParams ...any,
-) (*DbCache[T], error) {
+) (DbCache[T], error) {
 	if SQL == "" {
 		return nil, fmt.Errorf("loadSQL must not be empty")
 	}
@@ -315,7 +406,7 @@ func CreateSnowflakeCacheQualified[T any](
 	logSchema string,
 	monitoredTables []SnowflakeTable,
 	sqlParams ...any,
-) (*DbCache[T], error) {
+) (DbCache[T], error) {
 	if db == nil {
 		return nil, fmt.Errorf("db must not be nil")
 	}
@@ -340,7 +431,7 @@ func CreateSnowflakeCacheQualified[T any](
 		}
 	}
 
-	cache := &DbCache[T]{
+	cache := &snowflakeCache[T]{
 		db:              db,
 		loadSQL:         loadSQL,
 		sqlParameters:   sqlParams,
@@ -367,7 +458,7 @@ func CreateSnowflakeCacheQualified[T any](
 		return nil, fmt.Errorf("failed to perform initial load: %w", err)
 	}
 
-	// Start background poller (parity with Postgres)
+	// Start background poller for automatic cache refresh
 	go func() {
 		for now := range time.Tick(checkInterval) {
 			staleCheckVal, err := cache.getDbStaleCheckValue()
@@ -399,7 +490,7 @@ func extractKeyValue(obj any, keyField string) (string, error) {
 		return "", fmt.Errorf("map types are not supported for key extraction")
 	}
 
-	// Find struct field by name, case-insensitive (parity with Postgres cache)
+	// Find struct field by name, case-insensitive
 	t := v.Type()
 	var f reflect.Value
 	found := false

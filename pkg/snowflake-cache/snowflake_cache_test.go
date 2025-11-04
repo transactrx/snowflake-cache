@@ -48,7 +48,7 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSnowflakeCache failed: %v", err)
 	}
-	// no Close() in Snowflake cache (parity with Postgres)
+	// Cache does not require explicit Close()
 
 	// Assert cache contents
 	u1 := cache.Get("u1")
@@ -87,7 +87,7 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSnowflakeCache failed: %v", err)
 	}
-	// no Close() in Snowflake cache (parity with Postgres)
+	// Cache does not require explicit Close()
 
 	// ForceRefresh should re-read fingerprint and reload
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).

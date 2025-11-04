@@ -18,7 +18,7 @@ import (
 	sf "github.com/snowflakedb/gosnowflake"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	dbcache "github.com/transactrx/db-cache/pkg/db-cache"
+	snowflakecache "github.com/transactrx/db-cache/pkg/snowflake-cache"
 )
 
 // Test models that match our Snowflake database schema
@@ -252,9 +252,9 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
             ORDER BY CREATED_AT DESC
         `
 
-		// Create cache for API keys using the unified dbcache.CreateCache interface
+		// Create cache for API keys using the snowflakecache.CreateCache interface
 		// Note: Pass schema as DB_RW parameter for Snowflake - it's a string that will be used as defaultSchema
-		cache, err := dbcache.CreateCache[APIKey](
+		cache, err := snowflakecache.CreateCache[APIKey](
 			logger,
 			sqlQuery,
 			[]string{"API_KEYS"}, // monitored tables
@@ -309,8 +309,8 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
             ORDER BY USERNAME ASC
         `
 
-		// Create cache for users using the unified dbcache.CreateCache interface
-		cache, err := dbcache.CreateCache[User](
+		// Create cache for users using the snowflakecache.CreateCache interface
+		cache, err := snowflakecache.CreateCache[User](
 			logger,
 			sqlQuery,
 			[]string{"USERS"}, // monitored tables
@@ -348,7 +348,7 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		// Create a cache with a short refresh interval
 		sqlQuery := `SELECT ID AS "id", KEY AS "key", NAME AS "name", IS_ACTIVE AS "is_active", CREATED_AT AS "created_at" FROM ` + SNOWFLAKE_DATABASE + `.` + SNOWFLAKE_SCHEMA + `.API_KEYS WHERE IS_ACTIVE = TRUE`
 
-		cache, err := dbcache.CreateCache[APIKey](
+		cache, err := snowflakecache.CreateCache[APIKey](
 			logger,
 			sqlQuery,
 			[]string{"API_KEYS"},
@@ -404,7 +404,7 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		// Test with invalid SQL
 		invalidSQL := `SELECT INVALID_COLUMN FROM ` + SNOWFLAKE_DATABASE + `.` + SNOWFLAKE_SCHEMA + `.NON_EXISTENT_TABLE`
 
-		cache, err := dbcache.CreateCache[APIKey](
+		cache, err := snowflakecache.CreateCache[APIKey](
 			logger,
 			invalidSQL,
 			[]string{"API_KEYS"},
@@ -419,7 +419,7 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		// Test with invalid key field
 		validSQL := `SELECT ID AS "id", KEY AS "key", NAME AS "name", IS_ACTIVE AS "is_active", CREATED_AT AS "created_at" FROM ` + SNOWFLAKE_DATABASE + `.` + SNOWFLAKE_SCHEMA + `.API_KEYS WHERE IS_ACTIVE = TRUE`
 
-		cache, err = dbcache.CreateCache[APIKey](
+		cache, err = snowflakecache.CreateCache[APIKey](
 			logger,
 			validSQL,
 			[]string{"API_KEYS"},
@@ -502,7 +502,7 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 			WHERE IN_STOCK = TRUE
 		`, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTableName)
 
-		cache, err := dbcache.CreateCache[TestProduct](
+		cache, err := snowflakecache.CreateCache[TestProduct](
 			logger,
 			cacheSQL,
 			[]string{testTableName},

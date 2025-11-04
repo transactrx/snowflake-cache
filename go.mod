@@ -5,7 +5,6 @@ go 1.24
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/georgysavva/scany/v2 v2.1.4
-	github.com/jackc/pgx/v5 v5.7.5
 	github.com/snowflakedb/gosnowflake v1.17.0
 	github.com/stretchr/testify v1.10.0
 )
@@ -50,9 +49,7 @@ require ( // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c // indirect
-	github.com/jackc/pgpassfile v1.0.0 // indirect
-	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/pgx/v5 v5.7.5 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
@@ -77,5 +74,6 @@ require ( // indirect
 	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/tools v0.36.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

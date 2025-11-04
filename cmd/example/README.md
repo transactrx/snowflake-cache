@@ -1,75 +1,92 @@
-# DB Cache Examples
+# Snowflake Cache Examples
 
-This directory contains examples showing how to use the unified `dbcache.CreateCache` API with both PostgreSQL and Snowflake.
+This directory contains examples showing how to use the `snowflakecache.CreateCache` API with Snowflake.
 
-## Key Feature: Unified API
-
-The same `dbcache.CreateCache` function works with both PostgreSQL and Snowflake! The library automatically detects which database you're using based on the connection type.
-
-## PostgreSQL Example
+## Quick Start
 
 ```go
-import (
-    "github.com/jackc/pgx/v5/pgxpool"
-    dbcache "github.com/transactrx/db-cache/pkg/db-cache"
-)
+package main
 
-// Create PostgreSQL connection pools
-readPool, _ := pgxpool.New(context.Background(), "postgres://...")
-rwPool, _ := pgxpool.New(context.Background(), "postgres://...")
-
-// Create cache - library detects PostgreSQL from *pgxpool.Pool type
-cache, err := dbcache.CreateCache[MyStruct](
-    logger,
-    "SELECT id, name FROM users",
-    []string{"users"},     // monitored tables
-    "ID",                  // key field
-    time.Second * 30,      // refresh interval
-    readPool,              // read connection
-    rwPool,                // read-write connection (for triggers)
-)
-```
-
-## Snowflake Example
-
-```go
 import (
     "database/sql"
-    dbcache "github.com/transactrx/db-cache/pkg/db-cache"
+    "log"
+    "time"
+    _ "github.com/snowflakedb/gosnowflake" // register Snowflake driver
+    snowflakecache "github.com/transactrx/db-cache/pkg/snowflake-cache"
 )
 
-// Create Snowflake connection
-snowflakeDB, _ := sql.Open("snowflake", "user:password@account/database/schema")
+type ApiKey struct {
+    ID        *int       `db:"id"`
+    ApiKey    *string    `db:"api_key"`
+    UserID    *string    `db:"user_id"`   // key field: string or *string
+    IsActive  *bool      `db:"is_active"`
+    CreatedAt *time.Time `db:"created_at"`
+}
 
-// Create cache - library detects Snowflake from *sql.DB type
-cache, err := dbcache.CreateCache[MyStruct](
-    logger,
-    `SELECT ID AS "id", NAME AS "name" FROM MY_DATABASE.MY_SCHEMA.USERS`,
-    []string{"USERS"},     // monitored tables
-    "ID",                  // key field
-    time.Second * 60,      // refresh interval
-    snowflakeDB,           // Snowflake connection
-    "MY_DATABASE.MY_SCHEMA", // For Snowflake: specify database.schema
-)
+func main() {
+    // Connect to Snowflake
+    db, err := sql.Open("snowflake", "user:password@account/database/schema")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+
+    // Create cache
+    cache, err := snowflakecache.CreateCache[ApiKey](
+        nil, // logger (nil uses default)
+        `SELECT 
+            ID AS "id",
+            API_KEY AS "api_key",
+            USER_ID AS "user_id",
+            IS_ACTIVE AS "is_active",
+            CREATED_AT AS "created_at"
+        FROM MY_DATABASE.MY_SCHEMA.API_KEYS`,
+        []string{"API_KEYS"},    // monitored tables
+        "UserID",                // key field
+        time.Second*60,          // check interval
+        db,                      // Snowflake DB connection
+        "MY_DATABASE.MY_SCHEMA", // TABLE_LOG location: Database.Schema
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Use cache
+    result := cache.Get("someid")
+    if result != nil {
+        log.Printf("Found in cache: %v", result)
+    } else {
+        log.Printf("Value not found in cache!")
+    }
+
+    // Get all values
+    allKeys := cache.GetAll()
+    log.Printf("Total keys in cache: %d", len(allKeys))
+
+    // Force refresh if needed
+    if err := cache.ForceRefresh(); err != nil {
+        log.Printf("Error refreshing cache: %v", err)
+    }
+}
 ```
 
-## Key Differences
+## Parameters Explained
 
 ### Connection Type
-- **PostgreSQL**: Pass `*pgxpool.Pool` as the DB parameter
-- **Snowflake**: Pass `*sql.DB` as the DB parameter
+- **Snowflake**: Pass `*sql.DB` as the DB parameter (created with `sql.Open("snowflake", dsn)`)
 
-### Second Parameter (DB_RW)
-- **PostgreSQL**: Pass a second `*pgxpool.Pool` for trigger creation (can be same as read pool)
+### DB_RW Parameter
 - **Snowflake**: Pass a string in `"DATABASE.SCHEMA"` format to specify where TABLE_LOG is located
+- Example: `"MY_DATABASE.MY_SCHEMA"` means TABLE_LOG is at `MY_DATABASE.MY_SCHEMA.TABLE_LOG`
 
 ### SQL Naming
-- **PostgreSQL**: Uses lowercase names by default (`select id, name from users`)
-- **Snowflake**: Uses uppercase names by default, with quoted aliases for struct mapping (`SELECT ID AS "id", NAME AS "name" FROM USERS`)
+- **Snowflake**: Uses uppercase names by default, with quoted aliases for struct mapping
+- Example: `SELECT ID AS "id", NAME AS "name" FROM USERS`
+- The quoted aliases map to your Go struct field names (case-sensitive)
 
-## Cache Usage (Identical for Both!)
+## Cache Usage
 
-Once created, the cache API is identical for both databases:
+Once created, use the cache API:
 
 ```go
 // Get by key
@@ -85,28 +102,21 @@ err := cache.ForceRefresh()
 ## Running the Example
 
 ```bash
-# PostgreSQL example
-DB_BACKEND=postgres go run main.go
+# Set environment variable
+export DB_BACKEND=snowflake
 
-# Snowflake example
-DB_BACKEND=snowflake go run main.go
+# Run example
+go run main.go
 ```
 
 ## Prerequisites
 
-### PostgreSQL
-1. Running PostgreSQL instance
-2. Create the cache infrastructure:
-   ```go
-   import dbcache "github.com/transactrx/db-cache/pkg/db-cache"
-   err := dbcache.CreateDbTriggersAndTables(rwPool)
-   ```
+### Snowflake Setup
 
-### Snowflake
-1. Snowflake account with appropriate credentials
-2. Create TABLE_LOG manually:
+1. **Snowflake account** with appropriate credentials
+2. **Create TABLE_LOG** manually:
    ```sql
-   CREATE TABLE IF NOT EXISTS MY_SCHEMA.TABLE_LOG (
+   CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.TABLE_LOG (
        ID INTEGER AUTOINCREMENT,
        TABLE_NAME VARCHAR(255) NOT NULL,
        OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
@@ -114,9 +124,9 @@ DB_BACKEND=snowflake go run main.go
    );
    ```
 
+3. **Update TABLE_LOG** when monitored tables change (see main README for options)
+
 ## See Also
 
-- [PostgreSQL Integration Tests](../../integration-tests/postgres/)
 - [Snowflake Integration Tests](../../integration-tests/snowflake/)
 - [Main README](../../README.md)
-

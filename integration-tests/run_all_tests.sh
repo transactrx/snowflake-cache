@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Complete Integration Test Runner for DB Cache Library
-# This script runs both PostgreSQL and Snowflake integration tests
+# Integration Test Runner for Snowflake Cache Library
+# This script runs Snowflake integration tests
 
-echo "🚀 Starting Complete DB Cache Integration Tests"
+echo "🚀 Starting Snowflake Cache Integration Tests"
 echo "=============================================="
 
 # Colors for output
@@ -33,23 +33,6 @@ print_error() {
 # Change to integration-tests directory
 cd "$(dirname "$0")"
 
-# Track overall success
-overall_success=true
-
-# Run PostgreSQL tests
-echo ""
-print_status "Running PostgreSQL Integration Tests..."
-echo "=============================================="
-
-cd postgres
-if echo "n" | ./run_tests.sh; then
-    print_success "PostgreSQL tests completed successfully ✓"
-else
-    print_error "PostgreSQL tests failed ✗"
-    overall_success=false
-fi
-cd ..
-
 # Run Snowflake tests
 echo ""
 print_status "Running Snowflake Integration Tests..."
@@ -58,32 +41,23 @@ echo "=============================================="
 cd snowflake
 if ./run_tests.sh; then
     print_success "Snowflake tests completed successfully ✓"
-else
-    print_error "Snowflake tests failed ✗"
-    overall_success=false
-fi
-cd ..
-
-# Final summary
-echo ""
-echo "=============================================="
-if [ "$overall_success" = true ]; then
+    echo ""
+    echo "=============================================="
     print_success "All integration tests completed successfully! 🎉"
     echo ""
     print_status "Summary:"
-    echo "  ✓ PostgreSQL integration tests passed"
     echo "  ✓ Snowflake integration tests passed"
-    echo "  ✓ Both database backends are working correctly"
+    echo "  ✓ The snowflake-cache library is working correctly!"
     echo ""
-    print_success "The db-cache library is fully functional with both PostgreSQL and Snowflake!"
+    print_status "Integration test run completed!"
+    exit 0
 else
-    print_error "Some integration tests failed!"
+    print_error "Snowflake tests failed ✗"
     echo ""
-    print_status "Please check the individual test outputs above for details."
-    echo "  - PostgreSQL tests: ./postgres/run_tests.sh"
+    echo "=============================================="
+    print_error "Integration tests failed!"
+    echo ""
+    print_status "Please check the test output above for details."
     echo "  - Snowflake tests: ./snowflake/run_tests.sh"
     exit 1
 fi
-
-echo ""
-print_status "Integration test run completed!"

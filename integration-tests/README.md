@@ -1,26 +1,17 @@
-# Integration Tests for DB Cache Library
+# Integration Tests for Snowflake Cache Library
 
-This directory contains comprehensive integration tests for the db-cache library, supporting both PostgreSQL and Snowflake databases.
+This directory contains comprehensive integration tests for the snowflake-cache library.
 
 ## Structure
 
 ```
 integration-tests/
-├── postgres/           # PostgreSQL integration tests
-│   ├── docker-compose.yml
-│   ├── init/           # Database initialization scripts
-│   ├── integration_test.go
-│   ├── go.mod
-│   ├── README.md
-│   └── run_tests.sh
 ├── snowflake/          # Snowflake integration tests
-│   ├── docker-compose.yml (placeholder)
-│   ├── init/           # Database initialization scripts
 │   ├── integration_test.go
 │   ├── go.mod
 │   ├── README.md
 │   └── run_tests.sh
-├── run_all_tests.sh    # Run both PostgreSQL and Snowflake tests
+├── run_all_tests.sh    # Run Snowflake tests
 └── README.md           # This file
 ```
 
@@ -32,37 +23,9 @@ cd integration-tests
 ./run_all_tests.sh
 ```
 
-### Run Individual Database Tests
+### Run Individual Tests
 ```bash
-# PostgreSQL only
-cd postgres
-./run_tests.sh
-
-# Snowflake only
 cd snowflake
-./run_tests.sh
-```
-
-## PostgreSQL Tests
-
-The PostgreSQL tests use a Docker container for local testing:
-
-- **Container**: PostgreSQL 15 Alpine
-- **Port**: 5433 (to avoid conflicts)
-- **Database**: testdb
-- **User**: testuser
-- **Password**: testpass
-
-### Features Tested
-- ✅ Basic cache operations (`Get`, `GetAll`, `ForceRefresh`)
-- ✅ Auto-refresh behavior with database changes
-- ✅ Multiple data types and key fields
-- ✅ Error handling with invalid SQL and fields
-- ✅ Cache invalidation triggers
-
-### Running PostgreSQL Tests
-```bash
-cd postgres
 ./run_tests.sh
 ```
 
@@ -79,7 +42,7 @@ The Snowflake tests connect to a real Snowflake instance:
 - ✅ Auto-refresh behavior with database changes
 - ✅ Multiple data types and key fields
 - ✅ Error handling with invalid SQL and fields
-- ✅ Cache invalidation with manual logging
+- ✅ Cache invalidation with TABLE_LOG updates
 
 ### Running Snowflake Tests
 ```bash
@@ -96,8 +59,6 @@ SKIP_SNOWFLAKE_TESTS=true ./run_all_tests.sh
 ```
 
 ## Test Coverage
-
-Both PostgreSQL and Snowflake tests cover:
 
 ### 1. Basic Cache Operations
 - **GetAll()**: Retrieves all cached records
@@ -119,28 +80,16 @@ Both PostgreSQL and Snowflake tests cover:
 - Tests with invalid key field names
 - Tests with missing data
 
-## Database Schemas
-
-### PostgreSQL Schema
-- `api_keys` table with triggers for monitoring
-- `users` table with triggers for monitoring
-- `cache.table_log` for change tracking
-- Trigger functions for automatic logging
+## Database Schema
 
 ### Snowflake Schema
 - `API_KEYS` table with manual change logging
 - `USERS` table with manual change logging
-- `CACHE.TABLE_LOG` for change tracking
-- Stored procedures for change logging
+- `TABLE_LOG` for change tracking
+- Optional stored procedures for stream registration
 
 ## Prerequisites
 
-### PostgreSQL Tests
-- Docker and Docker Compose
-- Go 1.24 or later
-- Go modules enabled
-
-### Snowflake Tests
 - Go 1.24 or later
 - Go modules enabled
 - Snowflake account with appropriate permissions
@@ -148,37 +97,24 @@ Both PostgreSQL and Snowflake tests cover:
 
 ## Environment Variables
 
-### PostgreSQL Tests
-No environment variables required (uses Docker).
-
-### Snowflake Tests
 **Required:**
 - `SNOWFLAKE_ACCOUNT`: Your Snowflake account identifier
 - `SNOWFLAKE_USER`: Your Snowflake username
-- `SNOWFLAKE_PASSWORD`: Your Snowflake password
+- `SNOWFLAKE_PASSWORD`: Your Snowflake password (or use private key)
 
 **Optional:**
-- `SNOWFLAKE_DATABASE`: Database name (defaults to `TESTDB`)
-- `SNOWFLAKE_SCHEMA`: Schema name (defaults to `PUBLIC`)
+- `SNOWFLAKE_DATABASE`: Database name (defaults to `CPE_DEV`)
+- `SNOWFLAKE_SCHEMA`: Schema name (defaults to `CACHE_DEV`)
 - `SNOWFLAKE_WAREHOUSE`: Warehouse name (defaults to `COMPUTE_WH`)
+- `SNOWFLAKE_ROLE`: Role name
+- `SNOWFLAKE_PRIVATE_KEY`: Private key for key pair authentication
+- `SNOWFLAKE_PRIVATE_KEY_PATH`: Path to private key file
 
 **Test Control:**
 - `SKIP_SNOWFLAKE_TESTS`: Set to `true` to skip Snowflake tests
-- `SKIP_INTEGRATION_TESTS`: Set to `true` to skip all integration tests
+- `DB_CACHE_SF_REGISTER_STREAMS`: Set to `true` to enable automatic stream registration
 
 ## Troubleshooting
-
-### PostgreSQL Tests
-```bash
-# Check container status
-docker-compose ps
-
-# View container logs
-docker-compose logs postgres
-
-# Test database connection
-docker-compose exec postgres psql -U testuser -d testdb
-```
 
 ### Snowflake Tests
 ```bash
@@ -190,16 +126,12 @@ env | grep SNOWFLAKE
 ```
 
 ### Common Issues
-1. **Port conflicts**: PostgreSQL uses port 5433 to avoid conflicts
-2. **Permission issues**: Ensure Snowflake user has required permissions
-3. **Network issues**: Check firewall settings for Snowflake connections
-4. **Schema issues**: Verify database and schema exist in Snowflake
+1. **Permission issues**: Ensure Snowflake user has required permissions
+2. **Network issues**: Check firewall settings for Snowflake connections
+3. **Schema issues**: Verify database and schema exist in Snowflake
+4. **Authentication issues**: Verify credentials or private key format
 
 ## Cost Considerations
-
-### PostgreSQL Tests
-- **Free**: Uses local Docker container
-- **No external costs**: All testing is local
 
 ### Snowflake Tests
 - **Costs**: Uses real Snowflake instance
@@ -214,23 +146,11 @@ env | grep SNOWFLAKE
 
 ## Adding New Tests
 
-### For PostgreSQL
-1. Add test functions to `postgres/integration_test.go`
-2. Follow naming convention: `TestPostgresCacheIntegration/TestName`
-3. Use `require.NoError()` for setup and `assert.*` for validations
-4. Clean up any test data you create
-
-### For Snowflake
 1. Add test functions to `snowflake/integration_test.go`
 2. Follow naming convention: `TestSnowflakeCacheIntegration/TestName`
 3. Use `require.NoError()` for setup and `assert.*` for validations
 4. Clean up any test data you create
-
-### For Both
-1. Ensure tests work with both database backends
-2. Add appropriate documentation
-3. Update this README with new test scenarios
-4. Consider adding new test data types or scenarios
+5. Update this README with new test scenarios
 
 ## CI/CD Integration
 
@@ -240,18 +160,6 @@ name: Integration Tests
 on: [push, pull_request]
 
 jobs:
-  postgres-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
-        with:
-          go-version: '1.24'
-      - name: Run PostgreSQL tests
-        run: |
-          cd integration-tests/postgres
-          ./run_tests.sh
-
   snowflake-tests:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -284,4 +192,3 @@ jobs:
 - Consider using key pair authentication for Snowflake in production
 - Rotate credentials regularly
 - Use dedicated test accounts with minimal permissions
-

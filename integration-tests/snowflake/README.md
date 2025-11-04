@@ -1,6 +1,6 @@
-# Snowflake Integration Tests for DB Cache Library
+# Snowflake Integration Tests for Snowflake Cache Library
 
-This directory contains integration tests for the db-cache library using a real Snowflake database connection.
+This directory contains integration tests for the snowflake-cache library using a real Snowflake database connection.
 
 ## Prerequisites
 
@@ -140,7 +140,7 @@ go test -v -run TestSnowflakeCacheIntegration
 go test -v -count=1
 ```
 
-### Run All Integration Tests (PostgreSQL + Snowflake)
+### Run All Integration Tests
 
 ```bash
 cd integration-tests
@@ -185,7 +185,7 @@ When you enable stream registration by setting `DB_CACHE_SF_REGISTER_STREAMS=tru
 3. **Registers the stream** in your cache registry
 4. **Your heartbeat Task** can then query these streams and update TABLE_LOG
 
-This provides **PostgreSQL-style automatic cache invalidation** for Snowflake!
+This provides **automatic cache invalidation** for Snowflake!
 
 > **Prerequisites:** You must create the `REGISTERCACHETABLE` stored procedure in your cache schema (e.g., `CACHE_DEV`) before enabling this feature.
 
@@ -197,7 +197,7 @@ export DB_CACHE_SF_REGISTER_STREAMS=true
 
 ```go
 // Create the cache - Go will call REGISTERCACHETABLE for each monitored table
-cache, err := dbcache.CreateCache[MyType](
+cache, err := snowflakecache.CreateCache[MyType](
     logger,
     "SELECT ... FROM API_KEYS",
     []string{"API_KEYS"},      // REGISTERCACHETABLE called for API_KEYS
@@ -262,7 +262,7 @@ db.Exec("INSERT INTO TABLE_LOG (TABLE_NAME) VALUES ('API_KEYS')")
 1. **Connect to Snowflake** using credentials from environment
 2. **Create schema and tables** if they don't exist (idempotent)
 3. **Insert sample data** (or update if exists)
-4. **Create cache instances** using `dbcache.CreateCache` API
+4. **Create cache instances** using `snowflakecache.CreateCache` API
 5. **Test cache operations** (Get, GetAll, ForceRefresh)
 6. **Simulate data changes** and verify auto-refresh
 7. **Test error scenarios**
@@ -349,15 +349,3 @@ To minimize costs:
 - Sample data is minimal to reduce load
 - Connection pooling is handled by the Go Snowflake driver
 
-## Differences from PostgreSQL Tests
-
-| Aspect | PostgreSQL | Snowflake |
-|--------|-----------|-----------|
-| Connection | `*pgxpool.Pool` | `*sql.DB` |
-| Setup | Docker container | Real Snowflake instance |
-| Schema creation | Automatic via triggers | Manual grants + auto-setup |
-| Triggers | Supported | Not supported (manual TABLE_LOG updates) |
-| Cost | Free | May incur charges |
-| Speed | Fast (local) | Slower (network) |
-
-Both use the **same `dbcache.CreateCache` API**! 🎉
