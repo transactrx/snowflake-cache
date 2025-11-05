@@ -29,13 +29,13 @@ type SnowflakeTable struct {
 	Table  string
 }
 
-// snowflakeCache implements an in-memory cache backed by a Snowflake data source
+// dbCache implements an in-memory cache backed by a Snowflake data source
 // and a persistent change signal stored in <signalSchema>.DB_CACHE_LOG.
 //
 // The cache periodically polls DB_CACHE_LOG to compute a staleness fingerprint.
 // If the fingerprint differs from the last seen value, it reloads the dataset
 // using the provided SQL and rebuilds an index of key -> []T.
-type snowflakeCache[T any] struct {
+type dbCache[T any] struct {
 	mutex           sync.RWMutex
 	db              any
 	keyCache        map[string][]T
@@ -50,7 +50,7 @@ type snowflakeCache[T any] struct {
 }
 
 // Get returns the cached slice associated with the given key, or nil if missing.
-func (c *snowflakeCache[T]) Get(key string) []T {
+func (c *dbCache[T]) Get(key string) []T {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	if val, ok := c.keyCache[key]; ok {
@@ -60,7 +60,7 @@ func (c *snowflakeCache[T]) Get(key string) []T {
 }
 
 // GetAll flattens and returns all cached rows across all keys.
-func (c *snowflakeCache[T]) GetAll() []T {
+func (c *dbCache[T]) GetAll() []T {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	var result []T
@@ -71,7 +71,7 @@ func (c *snowflakeCache[T]) GetAll() []T {
 }
 
 // ForceRefresh clears the last fingerprint and forces a reload at once.
-func (c *snowflakeCache[T]) ForceRefresh() error {
+func (c *dbCache[T]) ForceRefresh() error {
 	c.mutex.Lock()
 	c.staleCheckVal = nil
 	c.mutex.Unlock()
@@ -85,7 +85,7 @@ func (c *snowflakeCache[T]) ForceRefresh() error {
 
 // getDbStaleCheckValue builds and executes the fingerprint query over DB_CACHE_LOG
 // for the configured set of monitored tables.
-func (c *snowflakeCache[T]) getDbStaleCheckValue() (*string, error) {
+func (c *dbCache[T]) getDbStaleCheckValue() (*string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// Build fully-qualified TABLE_LOG reference
@@ -129,7 +129,7 @@ func (c *snowflakeCache[T]) getDbStaleCheckValue() (*string, error) {
 
 // loadCache executes the load SQL, rebuilds the in-memory index, and
 // stores the new fingerprint.
-func (c *snowflakeCache[T]) loadCache(staleCheckVal *string) error {
+func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
 	if c.staleCheckVal != nil && *c.staleCheckVal == *staleCheckVal {
 		c.logger.Printf("Cache is already up to date..")
 		return nil
@@ -431,7 +431,7 @@ func CreateSnowflakeCacheQualified[T any](
 		}
 	}
 
-	cache := &snowflakeCache[T]{
+	cache := &dbCache[T]{
 		db:              db,
 		loadSQL:         loadSQL,
 		sqlParameters:   sqlParams,
