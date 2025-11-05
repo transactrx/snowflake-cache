@@ -55,7 +55,7 @@ func getTestSnowflakeConnection() (*sql.DB, error) {
 		SNOWFLAKE_DATABASE = "CPE_DEV"
 	}
 	if SNOWFLAKE_SCHEMA == "" {
-		SNOWFLAKE_SCHEMA = "CACHE_DEV"
+		SNOWFLAKE_SCHEMA = "DB_CACHE"
 	}
 
 	cfg := &sf.Config{
@@ -372,7 +372,7 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		// Manually log the change (since Snowflake doesn't have triggers)
 		schemaName := SNOWFLAKE_SCHEMA
 		if schemaName == "" {
-			schemaName = "CACHE_DEV"
+			schemaName = "DB_CACHE"
 		}
 		logSQL := fmt.Sprintf("INSERT INTO %s.TABLE_LOG (TABLE_NAME, OPERATION_TIME, OPERATION_TYPE) VALUES (?, CURRENT_TIMESTAMP(), ?)", SNOWFLAKE_DATABASE+"."+schemaName)
 		_, err = db.ExecContext(context.Background(), logSQL, "API_KEYS", "INSERT")
@@ -586,7 +586,7 @@ func setupSnowflakeSchemaAndData(t *testing.T, db *sql.DB) {
 
 	schemaName := SNOWFLAKE_SCHEMA
 	if schemaName == "" {
-		schemaName = "CACHE_DEV"
+		schemaName = "DB_CACHE"
 	}
 
 	statements := []string{

@@ -104,7 +104,7 @@ SKIP_SNOWFLAKE_TESTS=true ./run_all_tests.sh
 
 **Optional:**
 - `SNOWFLAKE_DATABASE`: Database name (defaults to `CPE_DEV`)
-- `SNOWFLAKE_SCHEMA`: Schema name (defaults to `CACHE_DEV`)
+- `SNOWFLAKE_SCHEMA`: Schema name (defaults to `DB_CACHE`)
 - `SNOWFLAKE_WAREHOUSE`: Warehouse name (defaults to `COMPUTE_WH`)
 - `SNOWFLAKE_ROLE`: Role name
 - `SNOWFLAKE_PRIVATE_KEY`: Private key for key pair authentication

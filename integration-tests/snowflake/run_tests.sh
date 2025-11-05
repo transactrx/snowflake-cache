@@ -78,7 +78,7 @@ print_status "Snowflake connection configuration:"
 echo "  Account: $SNOWFLAKE_ACCOUNT"
 echo "  User: $SNOWFLAKE_USER"
 echo "  Database: ${SNOWFLAKE_DATABASE:-CPE_DEV}"
-echo "  Schema: ${SNOWFLAKE_SCHEMA:-CACHE_DEV}"
+echo "  Schema: ${SNOWFLAKE_SCHEMA:-DB_CACHE}"
 echo "  Role: ${SNOWFLAKE_ROLE:-BATCHJOB_RW_DEV}"
 echo ""
 

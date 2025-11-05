@@ -30,7 +30,7 @@ Create a `.env` file in the project root of test folder or set these environment
 export SNOWFLAKE_ACCOUNT=your-account
 export SNOWFLAKE_USER=your-username
 export SNOWFLAKE_DATABASE=your-database
-export SNOWFLAKE_SCHEMA=your-schema      # e.g., CACHE_DEV
+export SNOWFLAKE_SCHEMA=your-schema      # e.g., DB_CACHE
 
 # Authentication
 export SNOWFLAKE_PRIVATE_KEY="xxgddteyyagagghrruwwosis"
@@ -45,7 +45,7 @@ export SNOWFLAKE_ROLE=your-role           # If you need to specify a role
 SNOWFLAKE_ACCOUNT=abc12345.us-east-1
 SNOWFLAKE_USER=SA_BATCH_RW_DEV
 SNOWFLAKE_DATABASE=CPE_DEV
-SNOWFLAKE_SCHEMA=CACHE_DEV
+SNOWFLAKE_SCHEMA=DB_CACHE
 SNOWFLAKE_WAREHOUSE=COMPUTE_WH
 SNOWFLAKE_ROLE=BATCHJOB_RW_DEV
 SNOWFLAKE_PRIVATE_KEY="LS0tLS1CRUdJTi..."  # Base64 encoded or PEM format
@@ -57,7 +57,7 @@ SNOWFLAKE_PRIVATE_KEY="LS0tLS1CRUdJTi..."  # Base64 encoded or PEM format
 
 The `setupSnowflakeSchemaAndData()` function in `integration_test.go` automatically creates:
 
-> **Note:** If you want to test automatic stream registration, you need to create the `REGISTERCACHETABLE` stored procedure in your `CACHE_DEV` schema and set `DB_CACHE_SF_REGISTER_STREAMS=true`. Otherwise, tests will manually update `TABLE_LOG`.
+> **Note:** If you want to test automatic stream registration, you need to create the `REGISTERCACHETABLE` stored procedure in your `DB_CACHE` schema and set `DB_CACHE_SF_REGISTER_STREAMS=true`. Otherwise, tests will manually update `TABLE_LOG`.
 
 1. **TABLE_LOG** - For tracking table changes (cache invalidation)
    ```sql
@@ -187,7 +187,7 @@ When you enable stream registration by setting `DB_CACHE_SF_REGISTER_STREAMS=tru
 
 This provides **automatic cache invalidation** for Snowflake!
 
-> **Prerequisites:** You must create the `REGISTERCACHETABLE` stored procedure in your cache schema (e.g., `CACHE_DEV`) before enabling this feature.
+> **Prerequisites:** You must create the `REGISTERCACHETABLE` stored procedure in your cache schema (e.g., `DB_CACHE`) before enabling this feature.
 
 ### Example (Go performs registration)
 ```bash
@@ -204,7 +204,7 @@ cache, err := snowflakecache.CreateCache[MyType](
     "ID",
     time.Second * 60,
     snowflakeDB,
-    "MY_DB.CACHE_DEV",         // Procedure called: MY_DB.CACHE_DEV.REGISTERCACHETABLE
+    "MY_DB.DB_CACHE",         // Procedure called: MY_DB.DB_CACHE.REGISTERCACHETABLE
 )
 
 // Now when data changes in API_KEYS:
@@ -219,12 +219,12 @@ Your procedure must have this signature and be executable by the test role:
 
 ```sql
 -- Signature (case-sensitive name)
-CREATE OR REPLACE PROCEDURE CPE_DEV.CACHE_DEV."REGISTERCACHETABLE"(
+CREATE OR REPLACE PROCEDURE CPE_DEV.DB_CACHE."REGISTERCACHETABLE"(
   DB_NAME VARCHAR, SCHEMA_NAME VARCHAR, TABLE_NAME VARCHAR
 ) RETURNS VARCHAR LANGUAGE JAVASCRIPT;
 
 -- Minimum privilege required by the test role (example role shown)
-GRANT USAGE ON PROCEDURE CPE_DEV.CACHE_DEV."REGISTERCACHETABLE"(VARCHAR, VARCHAR, VARCHAR)
+GRANT USAGE ON PROCEDURE CPE_DEV.DB_CACHE."REGISTERCACHETABLE"(VARCHAR, VARCHAR, VARCHAR)
 TO ROLE BATCHJOB_RW_DEV;
 ```
 
