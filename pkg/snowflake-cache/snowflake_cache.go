@@ -88,17 +88,17 @@ func (c *dbCache[T]) ForceRefresh() error {
 func (c *dbCache[T]) getDbStaleCheckValue() (*string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// Build fully-qualified TABLE_LOG reference
-	logTable := "TABLE_LOG"
+	// Build fully-qualified CACHE_LOG reference
+	logTable := "CACHE_LOG"
 	if c.logSchema != "" && c.logDatabase != "" {
-		logTable = fmt.Sprintf("%s.%s.TABLE_LOG", strings.ToUpper(c.logDatabase), strings.ToUpper(c.logSchema))
+		logTable = fmt.Sprintf("%s.%s.CACHE_LOG", strings.ToUpper(c.logDatabase), strings.ToUpper(c.logSchema))
 	} else if c.logSchema != "" {
-		logTable = fmt.Sprintf("%s.TABLE_LOG", strings.ToUpper(c.logSchema))
+		logTable = fmt.Sprintf("%s.CACHE_LOG", strings.ToUpper(c.logSchema))
 	}
 
-	// Generate base SQL (uses unqualified TABLE_LOG) and then qualify it
+	// Generate base SQL (uses unqualified CACHE_LOG) and then qualify it
 	base := generateStaleCheckSQL(c.monitoredTables)
-	q := strings.ReplaceAll(base, "TABLE_LOG", logTable)
+	q := strings.ReplaceAll(base, "CACHE_LOG", logTable)
 
 	// Build bind args (one per monitored table)
 	args := make([]any, 0, len(c.monitoredTables))
@@ -206,7 +206,7 @@ func CreateCache[T any](
 	}
 
 	// For backward compatibility: when only a schema is provided (no database),
-	// use "CACHE" as the log schema (where TABLE_LOG resides), not the defaultSchema.
+	// use "CACHE" as the log schema (where CACHE_LOG resides), not the defaultSchema.
 	// When database is provided, use defaultSchema as the log schema.
 	var logSchema string
 	if database == "" {
@@ -293,7 +293,7 @@ func CreateSnowflakeCache[T any](
 	)
 }
 
-// CreateCacheWithDatabase allows specifying both database and schema for TABLE_LOG location
+// CreateCacheWithDatabase allows specifying both database and schema for CACHE_LOG location
 func CreateCacheWithDatabase[T any](
 	logger *log.Logger,
 	SQL string,
@@ -339,16 +339,16 @@ func CreateCacheWithDatabase[T any](
 }
 
 // generateStaleCheckSQL builds the fingerprint query for the given monitored tables
-// using Snowflake SQL dialect. It intentionally references TABLE_LOG without schema,
-// and callers should replace TABLE_LOG with a fully qualified name when needed.
+// using Snowflake SQL dialect. It intentionally references CACHE_LOG without schema,
+// and callers should replace CACHE_LOG with a fully qualified name when needed.
 func generateStaleCheckSQL(monitoredTables []string) string {
 	if len(monitoredTables) == 1 {
-		return "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(operation_time), TO_TIMESTAMP_LTZ('1980-01-01'))) AS ct FROM TABLE_LOG WHERE table_name = ?"
+		return "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE_LOG WHERE table_name = ?"
 	}
 	var b strings.Builder
 	b.WriteString("SELECT LISTAGG(ct, ', ') FROM (")
 	for i := 0; i < len(monitoredTables); i++ {
-		b.WriteString("SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(operation_time), TO_TIMESTAMP_LTZ('1980-01-01'))) AS ct FROM TABLE_LOG WHERE table_name = ? ")
+		b.WriteString("SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE_LOG WHERE table_name = ? ")
 		if i < len(monitoredTables)-1 {
 			b.WriteString(" UNION ALL ")
 		} else {

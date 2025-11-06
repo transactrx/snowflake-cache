@@ -21,8 +21,8 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Fingerprint query expectation
-	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(operation_time), TO_TIMESTAMP_LTZ('1980-01-01'))) AS ct FROM CACHE.TABLE_LOG WHERE table_name = ?"
+    // Fingerprint query expectation
+    fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE.CACHE_LOG WHERE table_name = ?"
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
 		WithArgs("API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))
@@ -72,8 +72,8 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Initial fingerprint
-	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(operation_time), TO_TIMESTAMP_LTZ('1980-01-01'))) AS ct FROM CACHE.TABLE_LOG WHERE table_name = ?"
+    // Initial fingerprint
+    fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE.CACHE_LOG WHERE table_name = ?"
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
 		WithArgs("API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))

@@ -24,7 +24,7 @@ func snowflakeExample() {
 	defer snowflakeDB.Close()
 
 	// For Snowflake: pass "DATABASE.SCHEMA" format as the DB_RW parameter
-	// This tells the library where to find the TABLE_LOG for cache invalidation
+	// This tells the library where to find the CACHE_LOG for cache invalidation
 	cache, err := snowflakecache.CreateCache[ApiKey2](
 		nil, // logger (nil uses default)
 		`SELECT 

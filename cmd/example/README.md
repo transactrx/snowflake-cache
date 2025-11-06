@@ -45,7 +45,7 @@ func main() {
         "UserID",                // key field
         time.Second*60,          // check interval
         db,                      // Snowflake DB connection
-        "MY_DATABASE.MY_SCHEMA", // TABLE_LOG location: Database.Schema
+        "MY_DATABASE.MY_SCHEMA", // CACHE_LOG location: Database.Schema
     )
     if err != nil {
         log.Fatal(err)
@@ -76,8 +76,8 @@ func main() {
 - **Snowflake**: Pass `*sql.DB` as the DB parameter (created with `sql.Open("snowflake", dsn)`)
 
 ### DB_RW Parameter
-- **Snowflake**: Pass a string in `"DATABASE.SCHEMA"` format to specify where TABLE_LOG is located
-- Example: `"MY_DATABASE.MY_SCHEMA"` means TABLE_LOG is at `MY_DATABASE.MY_SCHEMA.TABLE_LOG`
+- **Snowflake**: Pass a string in `"DATABASE.SCHEMA"` format to specify where CACHE_LOG is located
+- Example: `"MY_DATABASE.MY_SCHEMA"` means CACHE_LOG is at `MY_DATABASE.MY_SCHEMA.CACHE_LOG`
 
 ### SQL Naming
 - **Snowflake**: Uses uppercase names by default, with quoted aliases for struct mapping
@@ -114,9 +114,9 @@ go run main.go
 ### Snowflake Setup
 
 1. **Snowflake account** with appropriate credentials
-2. **Create TABLE_LOG** manually:
+2. **Create CACHE_LOG** manually:
    ```sql
-   CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.TABLE_LOG (
+   CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.CACHE_LOG (
        ID INTEGER AUTOINCREMENT,
        TABLE_NAME VARCHAR(255) NOT NULL,
        OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
@@ -124,7 +124,7 @@ go run main.go
    );
    ```
 
-3. **Update TABLE_LOG** when monitored tables change (see main README for options)
+3. **Update CACHE_LOG** when monitored tables change (see main README for options)
 
 ## See Also
 

@@ -42,7 +42,7 @@ The Snowflake tests connect to a real Snowflake instance:
 - ✅ Auto-refresh behavior with database changes
 - ✅ Multiple data types and key fields
 - ✅ Error handling with invalid SQL and fields
-- ✅ Cache invalidation with TABLE_LOG updates
+- ✅ Cache invalidation with CACHE_LOG updates
 
 ### Running Snowflake Tests
 ```bash
@@ -85,7 +85,7 @@ SKIP_SNOWFLAKE_TESTS=true ./run_all_tests.sh
 ### Snowflake Schema
 - `API_KEYS` table with manual change logging
 - `USERS` table with manual change logging
-- `TABLE_LOG` for change tracking
+- `CACHE_LOG` for change tracking
 - Optional stored procedures for stream registration
 
 ## Prerequisites

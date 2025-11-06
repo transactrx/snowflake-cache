@@ -4,7 +4,7 @@ A lightweight, in-memory cache library for Snowflake databases that automaticall
 
 ## Features
 
-- ✅ **Automatic cache invalidation** via TABLE_LOG monitoring
+- ✅ **Automatic cache invalidation** via CACHE_LOG monitoring
 - ✅ **Type-safe generic interface** with Go generics
 - ✅ **Zero configuration** - just provide SQL and connection
 - ✅ **Thread-safe** concurrent access
@@ -46,7 +46,7 @@ func main() {
         "UserID",        // key field on struct
         5*time.Second,    // poll interval
         db,              // *sql.DB (gosnowflake)
-        "MY_DATABASE.MY_SCHEMA", // TABLE_LOG location: Database.Schema
+        "MY_DATABASE.MY_SCHEMA", // CACHE_LOG location: Database.Schema
     )
     if err != nil { log.Fatal(err) }
 
@@ -59,12 +59,12 @@ func main() {
 
 ## Required Setup
 
-### 1. Create TABLE_LOG
+### 1. Create CACHE_LOG
 
-Create a `TABLE_LOG` table in your Snowflake schema to track table changes:
+Create a `CACHE_LOG` table in your Snowflake schema to track table changes:
 
 ```sql
-CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.TABLE_LOG (
+CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.CACHE_LOG (
     ID INTEGER AUTOINCREMENT,
     TABLE_NAME VARCHAR(255) NOT NULL,
     OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
@@ -72,9 +72,9 @@ CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.TABLE_LOG (
 );
 ```
 
-### 2. Update TABLE_LOG on Changes
+### 2. Update CACHE_LOG on Changes
 
-Since Snowflake doesn't support triggers, you need to update `TABLE_LOG` when monitored tables change. Options:
+Since Snowflake doesn't support triggers, you need to update `CACHE_LOG` when monitored tables change. Options:
 
 **Option A: Manual Application Updates**
 ```go
@@ -82,12 +82,12 @@ Since Snowflake doesn't support triggers, you need to update `TABLE_LOG` when mo
 db.Exec("INSERT INTO MY_DATABASE.MY_SCHEMA.API_KEYS ...")
 
 // Manually log the change
-db.Exec("INSERT INTO MY_DATABASE.MY_SCHEMA.TABLE_LOG (TABLE_NAME, OPERATION_TIME) VALUES ('API_KEYS', CURRENT_TIMESTAMP())")
+db.Exec("INSERT INTO MY_DATABASE.MY_SCHEMA.CACHE_LOG (TABLE_NAME, OPERATION_TIME) VALUES ('API_KEYS', CURRENT_TIMESTAMP())")
 ```
 
 **Option B: Snowflake Streams + Task (Recommended)**
 - Create Streams on monitored tables
-- Create a Task that reads from Streams and updates TABLE_LOG
+- Create a Task that reads from Streams and updates CACHE_LOG
 - Optionally enable automatic stream registration: `export DB_CACHE_SF_REGISTER_STREAMS=true`
 
 See `integration-tests/snowflake/README.md` for detailed Stream + Task setup.
@@ -114,9 +114,9 @@ func CreateCache[T any](
 - `SQL`: SELECT query to load cached data
 - `monitoredTables`: Table names to monitor (e.g., `[]string{"API_KEYS"}`)
 - `keyField`: Struct field name used as cache key (must be string or *string)
-- `cacheCheckInterval`: How often to poll TABLE_LOG for changes
+- `cacheCheckInterval`: How often to poll CACHE_LOG for changes
 - `DB`: Snowflake *sql.DB connection
-- `DB_RW`: String in "DATABASE.SCHEMA" format pointing to TABLE_LOG location
+- `DB_RW`: String in "DATABASE.SCHEMA" format pointing to CACHE_LOG location
 - `SQLParams`: Optional query parameters
 
 ### DbCache Interface

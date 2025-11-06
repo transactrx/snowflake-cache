@@ -1,4 +1,4 @@
-## Snowflake Cache — Local change signal (CACHE.TABLE_LOG)
+## Snowflake Cache — Local change signal (CACHE.CACHE_LOG)
 
 ### Purpose
 
@@ -6,19 +6,19 @@ This document describes the Snowflake design that mirrors Postgres semantics as 
 
 ### How it works
 
-- Change signal lives in a fixed table: `CACHE.TABLE_LOG` with the columns:
+- Change signal lives in a fixed table: `CACHE.CACHE_LOG` with the columns:
   - `table_name` STRING PRIMARY KEY
   - `operation_time` TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP
-- On each INSERT/UPDATE/DELETE to a monitored table, the heartbeat process upserts a row for that table into `CACHE.TABLE_LOG`, updating `operation_time`.
-- The application cache polls `CACHE.TABLE_LOG` and computes a fingerprint per table: `COUNT(*) || TO_VARCHAR(MAX(operation_time))`. If the fingerprint changes, it reloads.
+- On each INSERT/UPDATE/DELETE to a monitored table, the heartbeat process upserts a row for that table into `CACHE.CACHE_LOG`, updating `operation_time`.
+- The application cache polls `CACHE.CACHE_LOG` and computes a fingerprint per table: `COUNT(*) || TO_VARCHAR(MAX(operation_time))`. If the fingerprint changes, it reloads.
 - The cache API is the same as Postgres: `Get`, `GetAll`, `ForceRefresh`.
 
 ### Why a heartbeat process?
 
 Snowflake does not use traditional table triggers for DML in the same way as Postgres. The recommended pattern is:
 - Create a Stream per table to capture changes
-- A scheduled Task runs a small procedure (the heartbeat) to detect new changes via Streams and upsert into `CACHE.TABLE_LOG`
-- Apps only read `CACHE.TABLE_LOG`
+- A scheduled Task runs a small procedure (the heartbeat) to detect new changes via Streams and upsert into `CACHE.CACHE_LOG`
+- Apps only read `CACHE.CACHE_LOG`
 
 This keeps the cache simple and symmetric with Postgres while using Snowflake‑native CDC.
 
@@ -29,7 +29,7 @@ This keeps the cache simple and symmetric with Postgres while using Snowflake‑
 ```sql
 CREATE SCHEMA IF NOT EXISTS CACHE;
 
-CREATE TABLE IF NOT EXISTS CACHE.TABLE_LOG (
+CREATE TABLE IF NOT EXISTS CACHE.CACHE_LOG (
   table_name     STRING PRIMARY KEY,
   operation_time TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -69,8 +69,8 @@ BEGIN
   WHEN NOT MATCHED THEN INSERT (schema_name, table_name, stream_name, enabled)
                        VALUES (s.schema_name, s.table_name, s.stream_name, TRUE);
 
-  -- Ensure a baseline row exists in CACHE.TABLE_LOG
-  MERGE INTO CACHE.TABLE_LOG t
+  -- Ensure a baseline row exists in CACHE.CACHE_LOG
+  MERGE INTO CACHE.CACHE_LOG t
   USING (SELECT :P_TABLE AS table_name) s
   ON (t.table_name = s.table_name)
   WHEN MATCHED THEN UPDATE SET operation_time = COALESCE(t.operation_time, CURRENT_TIMESTAMP())
@@ -81,7 +81,7 @@ END;
 $$;
 ```
 
-4) Heartbeat procedure (consumes Streams and updates `CACHE.TABLE_LOG`)
+4) Heartbeat procedure (consumes Streams and updates `CACHE.CACHE_LOG`)
 
 ```sql
 CREATE OR REPLACE PROCEDURE CACHE.HEARTBEAT()
@@ -109,9 +109,9 @@ while (rs.next()) {
   var hasData = ('' + has.getColumnValue(1)).toLowerCase() === 'true';
 
   if (hasData) {
-    // Upsert heartbeat into CACHE.TABLE_LOG
+    // Upsert heartbeat into CACHE.CACHE_LOG
     snowflake.createStatement({
-      sqlText: `MERGE INTO ${db}.CACHE.TABLE_LOG t
+      sqlText: `MERGE INTO ${db}.CACHE.CACHE_LOG t
                 USING (SELECT ? AS table_name) s
                 ON (t.table_name = s.table_name)
                 WHEN MATCHED THEN UPDATE SET operation_time=CURRENT_TIMESTAMP()
@@ -142,13 +142,13 @@ ALTER TASK CACHE.HEARTBEAT_TASK RESUME;
 
 ### Application integration (what your code does)
 
-The application cache reads only `CACHE.TABLE_LOG`. It computes a fingerprint exactly like Postgres and reloads if it changes.
+The application cache reads only `CACHE.CACHE_LOG`. It computes a fingerprint exactly like Postgres and reloads if it changes.
 
 Single table fingerprint:
 
 ```sql
 SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(operation_time), TO_TIMESTAMP_LTZ('1980-01-01'))) AS ct
-FROM CACHE.TABLE_LOG
+FROM CACHE.CACHE_LOG
 WHERE table_name = ?;
 ```
 
@@ -158,20 +158,20 @@ Multiple tables fingerprint (library composes a union‑all + listagg string of 
 SELECT LISTAGG(ct, ', ')
 FROM (
   SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(operation_time), TO_TIMESTAMP_LTZ('1980-01-01'))) AS ct
-  FROM CACHE.TABLE_LOG WHERE table_name = ?
+  FROM CACHE.CACHE_LOG WHERE table_name = ?
   UNION ALL
   SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(operation_time), TO_TIMESTAMP_LTZ('1980-01-01'))) AS ct
-  FROM CACHE.TABLE_LOG WHERE table_name = ?
+  FROM CACHE.CACHE_LOG WHERE table_name = ?
   -- … one SELECT per monitored table
 ) AS t;
 ```
 
 ### Setup steps
 
-1) Create schema `CACHE` and table `CACHE.TABLE_LOG` (DDL above)
+1) Create schema `CACHE` and table `CACHE.CACHE_LOG` (DDL above)
 2) For each table to monitor, call `CACHE.REGISTER_TABLE('<SCHEMA>', '<TABLE>')`
 3) Start `CACHE.HEARTBEAT_TASK` (requires a running warehouse)
-4) Grant the application role read access on `CACHE.TABLE_LOG`
+4) Grant the application role read access on `CACHE.CACHE_LOG`
 
 ### Notes on connection helpers
 

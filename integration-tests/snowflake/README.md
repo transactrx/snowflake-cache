@@ -57,11 +57,11 @@ SNOWFLAKE_PRIVATE_KEY="LS0tLS1CRUdJTi..."  # Base64 encoded or PEM format
 
 The `setupSnowflakeSchemaAndData()` function in `integration_test.go` automatically creates:
 
-> **Note:** If you want to test automatic stream registration, you need to create the `REGISTERCACHETABLE` stored procedure in your `DB_CACHE` schema and set `DB_CACHE_SF_REGISTER_STREAMS=true`. Otherwise, tests will manually update `TABLE_LOG`.
+> **Note:** If you want to test automatic stream registration, you need to create the `REGISTERCACHETABLE` stored procedure in your `DB_CACHE` schema and set `DB_CACHE_SF_REGISTER_STREAMS=true`. Otherwise, tests will manually update `CACHE_LOG`.
 
-1. **TABLE_LOG** - For tracking table changes (cache invalidation)
+1. **CACHE_LOG** - For tracking table changes (cache invalidation)
    ```sql
-   CREATE TABLE IF NOT EXISTS {DATABASE}.{SCHEMA}.TABLE_LOG (
+   CREATE TABLE IF NOT EXISTS {DATABASE}.{SCHEMA}.CACHE_LOG (
        ID INTEGER AUTOINCREMENT,
        TABLE_NAME VARCHAR(255) NOT NULL,
        OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
@@ -163,7 +163,7 @@ The integration tests cover:
 
 ### 3. Cache Auto-Refresh Behavior
 - Inserts new data into Snowflake
-- **Manually logs change in TABLE_LOG** (Snowflake doesn't support automatic triggers)
+- **Manually logs change in CACHE_LOG** (Snowflake doesn't support automatic triggers)
 - Waits for automatic cache refresh
 - Verifies cache picks up the new data
 
@@ -172,7 +172,7 @@ The integration tests cover:
 - Tests with invalid key fields
 - Verifies appropriate error messages
 
-## Important: TABLE_LOG Updates in Snowflake
+## Important: CACHE_LOG Updates in Snowflake
 
 **The library can automatically register Snowflake Streams** when you create a cache! 🎉
 
@@ -183,7 +183,7 @@ When you enable stream registration by setting `DB_CACHE_SF_REGISTER_STREAMS=tru
 1. **Call REGISTERCACHETABLE** procedure for each monitored table
 2. **The procedure creates a STREAM** for the table (tracks INSERT/UPDATE/DELETE)
 3. **Registers the stream** in your cache registry
-4. **Your heartbeat Task** can then query these streams and update TABLE_LOG
+4. **Your heartbeat Task** can then query these streams and update CACHE_LOG
 
 This provides **automatic cache invalidation** for Snowflake!
 
@@ -209,7 +209,7 @@ cache, err := snowflakecache.CreateCache[MyType](
 
 // Now when data changes in API_KEYS:
 // 1. Stream detects the change (created by REGISTERCACHETABLE)
-// 2. Your heartbeat Task writes to TABLE_LOG
+// 2. Your heartbeat Task writes to CACHE_LOG
 // 3. Cache auto-refreshes within check interval!
 ```
 
@@ -233,7 +233,7 @@ TO ROLE BATCHJOB_RW_DEV;
 If the REGISTERCACHETABLE call initiated by the Go code fails (e.g., procedure doesn't exist, insufficient privileges), the cache will:
 - **Still work** - All cache operations function normally
 - **Log a warning** - You'll know stream registration failed
-- **Allow manual refresh** - You can call `cache.ForceRefresh()` or manually update `TABLE_LOG`
+- **Allow manual refresh** - You can call `cache.ForceRefresh()` or manually update `CACHE_LOG`
 
 ### Requirements for Automatic Stream Registration
 
@@ -243,18 +243,18 @@ Your Snowflake setup needs:
 - Procedure has permissions to `CREATE STREAM` on monitored tables
 - Appropriate role assignment
 
-If these aren't available, cache creation will succeed but you'll get a warning. Cache will still work - you'll just need to call `ForceRefresh()` manually or manually insert into TABLE_LOG.
+If these aren't available, cache creation will succeed but you'll get a warning. Cache will still work - you'll just need to call `ForceRefresh()` manually or manually insert into CACHE_LOG.
 
 ### Manual Approach (Still Supported)
 
-If you prefer manual control, you can still insert into TABLE_LOG yourself:
+If you prefer manual control, you can still insert into CACHE_LOG yourself:
 
 ```go
 // Modify data
 db.Exec("INSERT INTO API_KEYS ...")
 
 // Manually log the change
-db.Exec("INSERT INTO TABLE_LOG (TABLE_NAME) VALUES ('API_KEYS')")
+db.Exec("INSERT INTO CACHE_LOG (TABLE_NAME) VALUES ('API_KEYS')")
 ```
 
 ## What the Tests Actually Do
@@ -302,7 +302,7 @@ GRANT ROLE {ROLE} TO USER {USER};
 ### Test Failures
 
 **Cache not refreshing**
-- Check that TABLE_LOG is being updated
+- Check that CACHE_LOG is being updated
 - Verify the refresh interval (1-2 seconds in tests)
 - Look for errors in test output
 
