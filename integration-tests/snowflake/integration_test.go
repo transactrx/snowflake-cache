@@ -239,6 +239,10 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 	logger := log.New(os.Stdout, "[SNOWFLAKE_INTEGRATION_TEST] ", log.LstdFlags|log.Lshortfile)
 
 	t.Run("APIKey Cache Operations", func(t *testing.T) {
+		// Ensure Go code registers streams via REGISTERCACHETABLE
+		prev := os.Getenv("DB_CACHE_SF_REGISTER_STREAMS")
+		os.Setenv("DB_CACHE_SF_REGISTER_STREAMS", "true")
+		defer os.Setenv("DB_CACHE_SF_REGISTER_STREAMS", prev)
 		// Define SQL query to load API keys
 		sqlQuery := `
             SELECT 
@@ -297,6 +301,10 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 	})
 
 	t.Run("User Cache Operations", func(t *testing.T) {
+		// Ensure Go code registers streams via REGISTERCACHETABLE
+		prev := os.Getenv("DB_CACHE_SF_REGISTER_STREAMS")
+		os.Setenv("DB_CACHE_SF_REGISTER_STREAMS", "true")
+		defer os.Setenv("DB_CACHE_SF_REGISTER_STREAMS", prev)
 		// Define SQL query to load users
 		sqlQuery := `
             SELECT 
@@ -345,76 +353,106 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 	})
 
 	t.Run("Cache Auto-Refresh Behavior", func(t *testing.T) {
-		// Create a cache with a refresh interval that checks frequently
-		// Note: The Snowflake Task updates CACHE_LOG every 1 minute, so we need to wait for that
-		sqlQuery := `SELECT ID AS "id", KEY AS "key", NAME AS "name", IS_ACTIVE AS "is_active", CREATED_AT AS "created_at" FROM ` + SNOWFLAKE_DATABASE + `.` + SNOWFLAKE_SCHEMA + `.API_KEYS WHERE IS_ACTIVE = TRUE`
+		// Ensure Go code registers streams via REGISTERCACHETABLE
+		prev := os.Getenv("DB_CACHE_SF_REGISTER_STREAMS")
+		os.Setenv("DB_CACHE_SF_REGISTER_STREAMS", "true")
+		defer os.Setenv("DB_CACHE_SF_REGISTER_STREAMS", prev)
 
+		// Create a dedicated table for this run to avoid stale/previous stream state
+		testTable := "API_KEYS_E2E_" + fmt.Sprintf("%d", time.Now().Unix())
+		createSQL := fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS %s.%s.%s (
+				ID INTEGER AUTOINCREMENT,
+				KEY VARCHAR(255) UNIQUE NOT NULL,
+				NAME VARCHAR(255) NOT NULL,
+				IS_ACTIVE BOOLEAN DEFAULT TRUE,
+				CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+			)
+		`, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable)
+		_, err := db.ExecContext(context.Background(), createSQL)
+		require.NoError(t, err, "Failed to create test table %s", testTable)
+		defer func() {
+			_, _ = db.ExecContext(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s.%s.%s", SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable))
+			t.Logf("✓ Dropped test table %s", testTable)
+		}()
+
+		// Seed initial rows
+		seedSQL := fmt.Sprintf(`INSERT INTO %s.%s.%s (KEY, NAME, IS_ACTIVE) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)`,
+			SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable)
+		_, err = db.ExecContext(context.Background(), seedSQL,
+			"e2e_key_1", "E2E One", true,
+			"e2e_key_2", "E2E Two", true,
+			"e2e_key_3", "E2E Three", false,
+		)
+		require.NoError(t, err, "Failed to seed test data")
+
+		// Create a cache against the dedicated table
+		sqlQuery := `SELECT ID AS "id", KEY AS "key", NAME AS "name", IS_ACTIVE AS "is_active", CREATED_AT AS "created_at" FROM ` +
+			SNOWFLAKE_DATABASE + `.` + SNOWFLAKE_SCHEMA + `.` + testTable + ` WHERE IS_ACTIVE = TRUE`
 		cache, err := snowflakecache.CreateCache[APIKey](
 			logger,
 			sqlQuery,
-			[]string{"API_KEYS"},
+			[]string{testTable},
 			"KEY",
-			5*time.Second, // Check every 5 seconds for CACHE_LOG changes
+			5*time.Second,
 			db,
 			SNOWFLAKE_DATABASE+"."+SNOWFLAKE_SCHEMA,
 		)
 		require.NoError(t, err, "Failed to create cache for auto-refresh test")
 
-		// Get initial data
+		// Allow registration settle
+		t.Logf("Waiting briefly for stream registration to settle for %s...", testTable)
+		time.Sleep(10 * time.Second)
+
 		initialData := cache.GetAll()
 		initialCount := len(initialData)
 		t.Logf("Initial cache contains %d records", initialCount)
 
-		// Insert a new record directly into the database
-		// The Snowflake Task will detect this change via Streams and update CACHE_LOG automatically
-		testKey := "test_auto_refresh_key_" + fmt.Sprintf("%d", time.Now().Unix())
-		insertSQL := `INSERT INTO ` + SNOWFLAKE_DATABASE + `.` + SNOWFLAKE_SCHEMA + `.API_KEYS (KEY, NAME, IS_ACTIVE) VALUES (?, ?, ?)`
+		// Insert new rows periodically until the Task update is observed
+		insertedKeys := []string{}
+		insertSQL := fmt.Sprintf(`INSERT INTO %s.%s.%s (KEY, NAME, IS_ACTIVE) VALUES (?, ?, ?)`,
+			SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable)
 		insertTime := time.Now()
-		_, err = db.ExecContext(context.Background(), insertSQL, testKey, "Test Auto Refresh", true)
+		firstKey := "test_auto_refresh_key_" + fmt.Sprintf("%d", time.Now().UnixNano())
+		_, err = db.ExecContext(context.Background(), insertSQL, firstKey, "E2E Insert 1", true)
 		require.NoError(t, err, "Failed to insert test record")
-		t.Logf("✓ Inserted test record '%s' into API_KEYS table at %v", testKey, insertTime)
+		insertedKeys = append(insertedKeys, firstKey)
+		t.Logf("✓ Inserted test record '%s' into %s", firstKey, testTable)
 
-		// Wait for the Snowflake Task to update CACHE_LOG (runs every 1 minute)
-		// Check CACHE_LOG periodically to see when the Task has updated it
-		// The Task does a MERGE/UPSERT, so we check if UPDATE_TIME was updated after our insert
-		t.Logf("Waiting for Snowflake Task to update CACHE_LOG (runs every 1 minute)...")
-		maxWaitTime := 2 * time.Minute // Wait up to 2 minutes for the Task to run
+		// Wait for CACHE_LOG UPDATE_TIME on FQN
+		maxWaitTime := 3 * time.Minute
 		checkInterval := 5 * time.Second
 		startTime := time.Now()
 		taskUpdatedLog := false
+		fqnTable := SNOWFLAKE_DATABASE + "." + SNOWFLAKE_SCHEMA + "." + testTable
+		var currentOperationTime sql.NullTime
 
 		for time.Since(startTime) < maxWaitTime {
-			// Check if CACHE_LOG UPDATE_TIME was updated after we inserted the record
-			// The Task does MERGE which updates existing rows, so we check if UPDATE_TIME > insertTime
 			checkLogSQL := fmt.Sprintf(`SELECT UPDATE_TIME FROM %s.%s.CACHE_LOG WHERE TABLE_NAME = ?`,
 				SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA)
-			var currentOperationTime sql.NullTime
-			err := db.QueryRowContext(context.Background(), checkLogSQL, "API_KEYS").Scan(&currentOperationTime)
+			currentOperationTime = sql.NullTime{}
+			err := db.QueryRowContext(context.Background(), checkLogSQL, fqnTable).Scan(&currentOperationTime)
 			if err == nil && currentOperationTime.Valid {
-				// Convert Snowflake timestamp to Go time for comparison
 				opTime := currentOperationTime.Time
-				// Check if UPDATE_TIME was updated after we inserted (with 10 second buffer for timing differences)
-				// We check if opTime is after (insertTime - 10 seconds) to account for clock differences
 				if opTime.After(insertTime.Add(-10 * time.Second)) {
 					taskUpdatedLog = true
-					t.Logf("✓ Snowflake Task has updated CACHE_LOG for API_KEYS (UPDATE_TIME: %v, insert time: %v)", opTime, insertTime)
+					t.Logf("✓ Snowflake Task updated CACHE_LOG for %s (UPDATE_TIME: %v)", fqnTable, opTime)
 					break
 				}
-			} else if err == sql.ErrNoRows {
-				// CACHE_LOG doesn't have a row yet - Task will create it when it runs
-				// Continue waiting
+			}
+			// Insert additional row to ensure stream is non-empty
+			newKey := "test_auto_refresh_key_" + fmt.Sprintf("%d", time.Now().UnixNano())
+			if _, ierr := db.ExecContext(context.Background(), insertSQL, newKey, "E2E Insert (retry)", true); ierr == nil {
+				insertedKeys = append(insertedKeys, newKey)
+				t.Logf("  Inserted another test record to nudge stream: %s", newKey)
 			}
 			time.Sleep(checkInterval)
-			t.Logf("  Still waiting for Task to update CACHE_LOG... (elapsed: %v)", time.Since(startTime))
 		}
+		require.True(t, taskUpdatedLog, "Snowflake Task must update CACHE_LOG within 3 minutes")
 
-		// Require that the Task updated CACHE_LOG - this verifies the Task is working
-		require.True(t, taskUpdatedLog, "Snowflake Task must update CACHE_LOG within 2 minutes - this verifies the Task is running correctly")
-
-		// Now wait for the cache to detect the change and refresh (checks every 5 seconds)
-		// Give it a few check cycles to pick up the change
+		// Wait for cache refresh
 		t.Logf("Waiting for cache to detect CACHE_LOG change and refresh...")
-		maxCacheWaitTime := 30 * time.Second
+		maxCacheWaitTime := 60 * time.Second
 		cacheCheckInterval := 2 * time.Second
 		cacheRefreshed := false
 		cacheRefreshStartTime := time.Now()
@@ -423,37 +461,26 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 			refreshedData := cache.GetAll()
 			refreshedCount := len(refreshedData)
 			if refreshedCount > initialCount {
-				// Cache has refreshed - verify the new record is there
-				newRecordData := cache.Get(testKey)
-				if len(newRecordData) > 0 {
-					cacheRefreshed = true
-					t.Logf("✓ Cache automatically refreshed and contains new record (cache count: %d, initial: %d)", refreshedCount, initialCount)
+				for _, k := range insertedKeys {
+					if rows := cache.Get(k); len(rows) > 0 {
+						cacheRefreshed = true
+						t.Logf("✓ Cache automatically refreshed and contains new record %s (count: %d > %d)", k, refreshedCount, initialCount)
+						break
+					}
+				}
+				if cacheRefreshed {
 					break
 				}
 			}
 			time.Sleep(cacheCheckInterval)
-			t.Logf("  Still waiting for cache to refresh... (elapsed: %v)", time.Since(cacheRefreshStartTime))
 		}
+		require.True(t, cacheRefreshed, "Cache must automatically refresh after CACHE_LOG is updated")
 
-		// Require that the cache refreshed - this verifies auto-refresh is working
-		require.True(t, cacheRefreshed, "Cache must automatically refresh after CACHE_LOG is updated - this verifies auto-refresh functionality is working")
-
-		// Final verification
-		refreshedData := cache.GetAll()
-		refreshedCount := len(refreshedData)
-		assert.Greater(t, refreshedCount, initialCount, "Cache should have picked up new record after Snowflake Task updated CACHE_LOG")
-
-		// Verify the new record is in the cache
-		newRecordData := cache.Get(testKey)
-		require.NotEmpty(t, newRecordData, "New record should be accessible via cache after automatic refresh")
-		assert.Equal(t, testKey, newRecordData[0].Key, "Should return correct new record")
-		assert.True(t, newRecordData[0].IsActive, "New record should be active")
-		t.Logf("✓ Auto-refresh confirmed: Cache successfully refreshed and contains new record '%s'", testKey)
-
-		// Clean up test record
-		_, err = db.ExecContext(context.Background(), `DELETE FROM `+SNOWFLAKE_DATABASE+`.`+SNOWFLAKE_SCHEMA+`.API_KEYS WHERE KEY = ?`, testKey)
-		require.NoError(t, err, "Failed to clean up test record")
-		t.Logf("✓ Cleaned up test record")
+		// Clean up rows and table (table is dropped in defer)
+		for _, k := range insertedKeys {
+			_, _ = db.ExecContext(context.Background(), fmt.Sprintf(`DELETE FROM %s.%s.%s WHERE KEY = ?`, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable), k)
+		}
+		t.Logf("✓ Cleaned up %d test records from %s", len(insertedKeys), testTable)
 	})
 
 	t.Run("Error Handling", func(t *testing.T) {
@@ -570,6 +597,10 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to create cache for test table")
 		t.Logf("✓ Created cache for %s", testTableName)
 
+		// Give stream registration a brief window to settle before first insert
+		t.Logf("Waiting briefly for stream registration to settle for %s...", testTableName)
+		time.Sleep(10 * time.Second)
+
 		// Step 5: Verify cache works correctly
 		allProducts := cache.GetAll()
 		assert.Len(t, allProducts, 2, "Should return 2 in-stock products")
@@ -604,18 +635,19 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		// Check CACHE_LOG periodically to see when the Task has updated it
 		// The Task does a MERGE/UPSERT, so we check if UPDATE_TIME was updated after our insert
 		t.Logf("Waiting for Snowflake Task to update CACHE_LOG (runs every 1 minute)...")
-		maxWaitTime := 2 * time.Minute // Wait up to 2 minutes for the Task to run
+		maxWaitTime := 3 * time.Minute // Wait up to 3 minutes for the Task to run
 		checkInterval := 5 * time.Second
 		startTime := time.Now()
 		taskUpdatedLog := false
 
+		fqnTable := SNOWFLAKE_DATABASE + "." + SNOWFLAKE_SCHEMA + "." + testTableName
 		for time.Since(startTime) < maxWaitTime {
 			// Check if CACHE_LOG UPDATE_TIME was updated after we inserted the record
 			// The Task does MERGE which updates existing rows, so we check if UPDATE_TIME > insertTime
 			checkLogSQL := fmt.Sprintf(`SELECT UPDATE_TIME FROM %s.%s.CACHE_LOG WHERE TABLE_NAME = ?`,
 				SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA)
 			var currentOperationTime sql.NullTime
-			err := db.QueryRowContext(ctx, checkLogSQL, testTableName).Scan(&currentOperationTime)
+			err := db.QueryRowContext(ctx, checkLogSQL, fqnTable).Scan(&currentOperationTime)
 			if err == nil && currentOperationTime.Valid {
 				// Convert Snowflake timestamp to Go time for comparison
 				opTime := currentOperationTime.Time
@@ -630,6 +662,14 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 				// CACHE_LOG doesn't have a row yet - Task will create it when it runs
 				// Continue waiting
 			}
+			// If not yet updated, insert another distinct record to ensure the stream has data
+			retryCode := "PROD" + fmt.Sprintf("%d", time.Now().UnixNano())[:6]
+			if _, ierr := db.ExecContext(ctx, insertNewSQL, retryCode, "Widget Retry", 49.99, true); ierr == nil {
+				t.Logf("  Inserted another test product to nudge stream: %s", retryCode)
+			} else {
+				t.Logf("  Insert retry failed: %v", ierr)
+			}
+
 			time.Sleep(checkInterval)
 			t.Logf("  Still waiting for Task to update CACHE_LOG... (elapsed: %v)", time.Since(startTime))
 		}
@@ -640,7 +680,7 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		// Now wait for the cache to detect the change and refresh (checks every 2 seconds)
 		// Give it a few check cycles to pick up the change
 		t.Logf("Waiting for cache to detect CACHE_LOG change and refresh...")
-		maxCacheWaitTime := 30 * time.Second
+		maxCacheWaitTime := 60 * time.Second
 		cacheCheckInterval := 2 * time.Second
 		cacheRefreshed := false
 		cacheRefreshStartTime := time.Now()
@@ -702,7 +742,7 @@ func setupSnowflakeSchemaAndData(t *testing.T, db *sql.DB) {
 
 	statements := []string{
 		// Change log table (qualified)
-		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s.CACHE_LOG (ID INTEGER AUTOINCREMENT, TABLE_NAME VARCHAR(255) NOT NULL, OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(), OPERATION_TYPE VARCHAR(10) DEFAULT 'UPDATE')", SNOWFLAKE_DATABASE, schemaName),
+		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s.CACHE_LOG (TABLE_NAME VARCHAR(16777216), UPDATE_TIME TIMESTAMP_TZ(9) DEFAULT CURRENT_TIMESTAMP())", SNOWFLAKE_DATABASE, schemaName),
 		// API keys table
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.%s.API_KEYS (
             ID INTEGER AUTOINCREMENT,

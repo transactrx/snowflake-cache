@@ -40,6 +40,7 @@ type dbCache[T any] struct {
 	db              any
 	keyCache        map[string][]T
 	monitoredTables []string
+	fingerprintTableNames []string
 	loadSQL         string
 	sqlParameters   []any
 	keyField        string
@@ -100,10 +101,21 @@ func (c *dbCache[T]) getDbStaleCheckValue() (*string, error) {
 	base := generateStaleCheckSQL(c.monitoredTables)
 	q := strings.ReplaceAll(base, "CACHE_LOG", logTable)
 
-	// Build bind args (one per monitored table)
+	// Build bind args (one per monitored table).
+	// Important: The heartbeat writes fully qualified table names into CACHE_LOG (DB.SCHEMA.TABLE).
+	// We must match that format when querying by TABLE_NAME, otherwise we would never see updates.
 	args := make([]any, 0, len(c.monitoredTables))
 	for _, t := range c.monitoredTables {
-		args = append(args, t)
+		var tableIdentifier string
+		switch {
+		case c.logDatabase != "" && c.logSchema != "":
+			tableIdentifier = fmt.Sprintf("%s.%s.%s", strings.ToUpper(c.logDatabase), strings.ToUpper(c.logSchema), strings.ToUpper(t))
+		case c.logSchema != "":
+			tableIdentifier = fmt.Sprintf("%s.%s", strings.ToUpper(c.logSchema), strings.ToUpper(t))
+		default:
+			tableIdentifier = strings.ToUpper(t)
+		}
+		args = append(args, tableIdentifier)
 	}
 
 	// Scan result
@@ -423,11 +435,24 @@ func CreateSnowflakeCacheQualified[T any](
 		logger = log.New(os.Stdout, "sf_cache ", log.Lshortfile|log.Ltime)
 	}
 
-	// Convert to []string for internal storage
+	// Convert to []string for internal storage (store unqualified TABLE names for cache indexing and logging)
 	tbls := make([]string, 0, len(monitoredTables))
 	for _, t := range monitoredTables {
 		if t.Table != "" {
 			tbls = append(tbls, strings.ToUpper(t.Table))
+		}
+	}
+	// Build fingerprint table names (FQN) if we know the database; used only for CACHE_LOG lookups
+	var fqnTables []string
+	if logDatabase != "" {
+		for _, t := range monitoredTables {
+			if t.Table == "" {
+				continue
+			}
+			schema := strings.ToUpper(t.Schema)
+			table := strings.ToUpper(t.Table)
+			fqn := fmt.Sprintf("%s.%s.%s", strings.ToUpper(logDatabase), schema, table)
+			fqnTables = append(fqnTables, fqn)
 		}
 	}
 
@@ -437,6 +462,7 @@ func CreateSnowflakeCacheQualified[T any](
 		sqlParameters:   sqlParams,
 		keyField:        keyField,
 		monitoredTables: tbls,
+		fingerprintTableNames: fqnTables,
 		logger:          logger,
 		keyCache:        make(map[string][]T),
 	}
