@@ -23,8 +23,8 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 
     // Fingerprint query expectation
     fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE.CACHE_LOG WHERE table_name = ?"
-	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-		WithArgs("API_KEYS").
+    mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
+        WithArgs("CACHE.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))
 
 	// Load SQL expectation
@@ -74,8 +74,8 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 
     // Initial fingerprint
     fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE.CACHE_LOG WHERE table_name = ?"
-	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-		WithArgs("API_KEYS").
+    mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
+        WithArgs("CACHE.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))
 
 	// Initial load
@@ -90,8 +90,8 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	// Cache does not require explicit Close()
 
 	// ForceRefresh should re-read fingerprint and reload
-	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-		WithArgs("API_KEYS").
+    mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
+        WithArgs("CACHE.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp2"))
 
 	// Reload expectation
