@@ -371,7 +371,9 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		`, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable)
 		_, err := db.ExecContext(context.Background(), createSQL)
 		require.NoError(t, err, "Failed to create test table %s", testTable)
+		// Ensure we unregister the stream created for this table regardless of test outcome
 		defer func() {
+			unregisterCacheTableIfExists(t, db, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable)
 			_, _ = db.ExecContext(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s.%s.%s", SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable))
 			t.Logf("✓ Dropped test table %s", testTable)
 		}()
@@ -408,14 +410,14 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 		initialCount := len(initialData)
 		t.Logf("Initial cache contains %d records", initialCount)
 
-		// Insert new rows periodically until the Task update is observed
+		// Single insert; then measure latency until CACHE_LOG updates
 		insertedKeys := []string{}
 		insertSQL := fmt.Sprintf(`INSERT INTO %s.%s.%s (KEY, NAME, IS_ACTIVE) VALUES (?, ?, ?)`,
 			SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTable)
-		insertTime := time.Now()
 		firstKey := "test_auto_refresh_key_" + fmt.Sprintf("%d", time.Now().UnixNano())
 		_, err = db.ExecContext(context.Background(), insertSQL, firstKey, "E2E Insert 1", true)
 		require.NoError(t, err, "Failed to insert test record")
+		insertTime := time.Now()
 		insertedKeys = append(insertedKeys, firstKey)
 		t.Logf("✓ Inserted test record '%s' into %s", firstKey, testTable)
 
@@ -436,15 +438,11 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 				opTime := currentOperationTime.Time
 				if opTime.After(insertTime.Add(-10 * time.Second)) {
 					taskUpdatedLog = true
-					t.Logf("✓ Snowflake Task updated CACHE_LOG for %s (UPDATE_TIME: %v)", fqnTable, opTime)
+					localLatency := time.Since(insertTime)
+					sfDelta := opTime.Sub(insertTime)
+					t.Logf("✓ Snowflake Task updated CACHE_LOG for %s (UPDATE_TIME: %v) | latency: local=%v, snowflake_delta=%v", fqnTable, opTime, localLatency, sfDelta)
 					break
 				}
-			}
-			// Insert additional row to ensure stream is non-empty
-			newKey := "test_auto_refresh_key_" + fmt.Sprintf("%d", time.Now().UnixNano())
-			if _, ierr := db.ExecContext(context.Background(), insertSQL, newKey, "E2E Insert (retry)", true); ierr == nil {
-				insertedKeys = append(insertedKeys, newKey)
-				t.Logf("  Inserted another test record to nudge stream: %s", newKey)
 			}
 			time.Sleep(checkInterval)
 		}
@@ -540,6 +538,7 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 
 		// Ensure cleanup happens
 		defer func() {
+			unregisterCacheTableIfExists(t, db, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTableName)
 			dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s.%s.%s", SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, testTableName)
 			db.ExecContext(context.Background(), dropSQL)
 			t.Logf("✓ Cleaned up test table: %s", testTableName)
@@ -655,21 +654,15 @@ func TestSnowflakeCacheIntegration(t *testing.T) {
 				// We check if opTime is after (insertTime - 10 seconds) to account for clock differences
 				if opTime.After(insertTime.Add(-10 * time.Second)) {
 					taskUpdatedLog = true
-					t.Logf("✓ Snowflake Task has updated CACHE_LOG for %s (UPDATE_TIME: %v, insert time: %v)", testTableName, opTime, insertTime)
+					localLatency := time.Since(insertTime)
+					sfDelta := opTime.Sub(insertTime)
+					t.Logf("✓ Snowflake Task has updated CACHE_LOG for %s (UPDATE_TIME: %v, insert time: %v) | latency: local=%v, snowflake_delta=%v", testTableName, opTime, insertTime, localLatency, sfDelta)
 					break
 				}
 			} else if err == sql.ErrNoRows {
 				// CACHE_LOG doesn't have a row yet - Task will create it when it runs
 				// Continue waiting
 			}
-			// If not yet updated, insert another distinct record to ensure the stream has data
-			retryCode := "PROD" + fmt.Sprintf("%d", time.Now().UnixNano())[:6]
-			if _, ierr := db.ExecContext(ctx, insertNewSQL, retryCode, "Widget Retry", 49.99, true); ierr == nil {
-				t.Logf("  Inserted another test product to nudge stream: %s", retryCode)
-			} else {
-				t.Logf("  Insert retry failed: %v", ierr)
-			}
-
 			time.Sleep(checkInterval)
 			t.Logf("  Still waiting for Task to update CACHE_LOG... (elapsed: %v)", time.Since(startTime))
 		}
@@ -811,5 +804,32 @@ func ensureDbAndSchemaContext(t *testing.T, db *sql.DB) {
 	if strings.TrimSpace(SNOWFLAKE_DATABASE) != "" && strings.TrimSpace(SNOWFLAKE_SCHEMA) != "" {
 		_, err := db.ExecContext(ctx, fmt.Sprintf("USE SCHEMA %s.%s", SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA))
 		require.NoError(t, err, "Not authorized to USE SCHEMA %s.%s", SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA)
+	}
+}
+
+// unregisterCacheTableIfExists attempts to call an UNREGISTER procedure to remove
+// any stream and log registrations for a given table. It tries common name variants
+// and logs warnings on failure without failing the test.
+func unregisterCacheTableIfExists(t *testing.T, db *sql.DB, dbName, schema, table string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+    // Candidate procedure names: prefer exact quoted identifier first
+    procCandidates := []string{
+        fmt.Sprintf("%s.%s.\"UNREGISTERCACHETABLE\"", dbName, schema),
+        fmt.Sprintf("%s.%s.UNREGISTERCACHETABLE", dbName, schema),
+        fmt.Sprintf("%s.%s.unRegisterCacheTable", dbName, schema),
+    }
+
+	for _, procFQN := range procCandidates {
+		call := fmt.Sprintf("CALL %s(?, ?, ?)", procFQN)
+		if _, err := db.ExecContext(ctx, call, dbName, schema, table); err == nil {
+			t.Logf("✓ Unregistered cache stream via %s for %s.%s.%s", procFQN, dbName, schema, table)
+			return
+		} else {
+			// non-fatal: try next candidate
+			log.Printf("warning: could not unregister stream via %s for %s.%s.%s: %v", procFQN, dbName, schema, table, err)
+		}
 	}
 }
