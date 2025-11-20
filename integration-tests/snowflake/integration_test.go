@@ -780,11 +780,8 @@ func setupSnowflakeSchemaAndData(t *testing.T, db *sql.DB) {
         ('diana','diana@example.com','moderator')`, SNOWFLAKE_DATABASE, schemaName))
 	require.NoError(t, err)
 
-	// Prime the change log (rely on default OPERATION_TIME)
-	_, err = db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s.%s.CACHE_LOG (TABLE_NAME) VALUES
-        ('API_KEYS'),
-        ('USERS')`, SNOWFLAKE_DATABASE, schemaName))
-	require.NoError(t, err)
+	// Note: CACHE_LOG entries are automatically created by REGISTERCACHETABLE procedure
+	// and updated by the Snowflake Task. No manual INSERT needed.
 }
 
 // ensureDbAndSchemaContext executes USE statements to set current DB and schema,
