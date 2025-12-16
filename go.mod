@@ -1,4 +1,4 @@
-module github.com/transactrx/db-cache
+module github.com/transactrx/snowflake-cache
 
 go 1.24
 

@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	snowflakecache "github.com/transactrx/db-cache/pkg/snowflake-cache"
+	snowflakecache "github.com/transactrx/snowflake-cache/pkg/snowflake-cache"
 )
 
 // ApiKey2 type is defined in apiKeyModel.go
