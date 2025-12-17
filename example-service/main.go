@@ -68,13 +68,22 @@ func runComparison(cacheManager *cache.CacheManager, rep *reporter.Reporter) {
 	// Force refresh both caches before comparison
 	sfErr, pgErr := cacheManager.ForceRefreshBoth()
 
-	// If either refresh fails, log and skip this comparison
+	// Track whether any refresh failed so we can:
+	//   1. Log a structured error for each failing cache (Snowflake, Postgres, or both)
+	//   2. Skip this comparison cycle entirely whenever at least one refresh fails.
+	// This ensures we never emit a misleading ComparisonReport that is actually
+	// caused by a refresh failure rather than a true data discrepancy.
+	var hadError bool
 	if sfErr != nil {
 		rep.LogRefreshError("snowflake", sfErr)
-		return
+		hadError = true
 	}
 	if pgErr != nil {
 		rep.LogRefreshError("postgres", pgErr)
+		hadError = true
+	}
+	if hadError {
+		// At least one cache failed to refresh; do not attempt to compare data.
 		return
 	}
 
