@@ -113,26 +113,64 @@ Environment variables needed:
 - `SNOWFLAKE_DSN` - Snowflake connection string
 - `POSTGRES_DSN` - PostgreSQL connection string
 - `SNOWFLAKE_DATABASE_SCHEMA` - e.g., "MY_DATABASE.MY_SCHEMA"
-- `COMPARISON_INTERVAL` - Interval between comparisons (default: 5 minutes)
-- `LOG_LEVEL` - Logging verbosity (debug, info, warn, error)
+- `COMPARISON_INTERVAL` - Interval between comparisons, parsed as a `time.Duration`
+  string (for example: `"5m"`, `"30s"`, `"1h"`). If unset, default to `"5m"`.
+- `LOG_LEVEL` - Logging verbosity (one of: `debug`, `info`, `warn`, `error`).
+  If unset, default to `info`.
+- `MAX_DETAILED_MISMATCHES` - Optional limit on how many individual
+  `ValueMismatch` entries are emitted in logs per comparison run. Parsed as an
+  integer; if unset, default to `100`.
 
 ### 2. Cache Manager (`cache_manager.go`)
 Responsible for:
 - Initializing both Snowflake and PostgreSQL caches
 - Managing cache lifecycle
 - Providing unified access to both caches
+- Handling initialization failures in a fail-fast manner:
+  - If either cache (or its underlying DB connection) fails to initialize,
+    log a clear, structured error and do **not** start the periodic comparison
+    loop. The service should exit so that infrastructure can restart it or
+    alert on the failure, rather than emitting misleading comparison results.
 
 ### 3. Comparison Engine (`comparator.go`)
 Comparison logic:
-- **Count comparison**: Total items in each cache
-- **Key comparison**: Keys present in one cache but not the other
-- **Value comparison**: For matching keys, compare field values
-- **Timestamp tracking**: Record when discrepancies are detected
+- **Forced refresh before comparison**:
+  - On each comparison interval, call `ForceRefresh()` on **both** caches.
+  - If `ForceRefresh()` fails for either cache, log a structured error that
+    includes which cache failed and the error message, and **skip** producing
+    a `ComparisonReport` for that interval. This avoids reporting data
+    mismatches that are actually caused by connectivity or refresh issues.
+- **Count comparison**: Total items in each cache (after successful refresh).
+- **Key comparison**: Keys present in one cache but not the other.
+- **Value comparison**: For matching keys, compare field values field-by-field:
+  - For pointer fields (e.g., `*string`, `*int64` in `ApiKey`):
+    - Values are considered equal if **both pointers are `nil`**, or if
+      **both are non-`nil` and the underlying values are equal**
+      (for example, `*a == *b`).
+    - Any other combination (one `nil`, one non-`nil`, or different
+      underlying values) is treated as a mismatch.
+  - For string fields (including `Configuration` and `Volumes`), values are
+    compared using simple string equality. If these columns contain JSON, the
+    initial implementation compares them as raw strings; if this produces
+    noisy mismatches in practice, the comparator can be extended in the
+    future to parse and compare JSON structures instead.
+- **Timestamp tracking**: Record when discrepancies are detected and how long
+  the comparison took.
 
 ### 4. Reporter (`reporter.go`)
 Logging and metrics:
-- Structured JSON logging for discrepancies
+- Structured JSON logging for discrepancies and operational errors:
+  - Log each successful comparison as a structured `ComparisonReport`.
+  - When a comparison is skipped due to refresh or initialization failures,
+    log a structured error event (including which cache failed and why) so
+    operators can distinguish infrastructure issues from true data mismatches.
 - Summary statistics
+- Detailed mismatch logging with safety limits:
+  - When logging `ValueMismatches`, include at most
+    `MAX_DETAILED_MISMATCHES` detailed entries per comparison run (default:
+    100), but always log the **total** mismatch count.
+  - This prevents log flooding in the event of widespread discrepancies
+    while still surfacing the overall severity.
 - Optional webhook/alerting integration
 
 ### 5. Main Entry Point (`main.go`)
@@ -304,16 +342,31 @@ FROM api_keys
 
 1. **Thread Safety**: Both cache libraries are thread-safe, so comparison can run concurrently with cache refreshes.
 
-2. **Cache Refresh Timing**: Both caches poll independently. Consider forcing a refresh on both before comparison for consistency:
+2. **Cache Refresh Timing**: Both caches poll independently. For accurate
+   comparisons, **always** force a refresh on both caches immediately before
+   each comparison:
    ```go
-   snowflakeCache.ForceRefresh()
-   postgresCache.ForceRefresh()
-   // Then compare
+   if err := snowflakeCache.ForceRefresh(); err != nil {
+       // log error and skip this comparison interval
+   }
+   if err := postgresCache.ForceRefresh(); err != nil {
+       // log error and skip this comparison interval
+   }
+   // Only compare if both refreshes succeeded
    ```
+   If either refresh fails, the service should log an error and skip producing
+   a `ComparisonReport` for that interval.
 
 3. **Memory Considerations**: Both caches hold full dataset in memory. Ensure the service has adequate memory.
 
 4. **Graceful Shutdown**: Both caches run background goroutines. Implement proper shutdown to avoid resource leaks.
 
 5. **Local Development**: Use `replace` directives in `go.mod` to reference local library copies during development.
+
+6. **Source of Truth During Migration**: During the migration phase, PostgreSQL
+   is treated as the canonical source of truth. Interpretation guidelines:
+   - `MissingInSnowflake` typically indicates a potential issue with Snowflake
+     data, replication, or the Snowflake cache.
+   - `MissingInPostgres` may be expected once new writes begin targeting
+     Snowflake only and should be interpreted in that operational context.
 
