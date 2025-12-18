@@ -9,10 +9,18 @@ import (
 
 // Config holds all configuration for the cache comparison service.
 type Config struct {
-	// Database connections
-	SnowflakeDSN          string
-	PostgresDSN           string
-	SnowflakeDatabaseSchema string // e.g., "MY_DATABASE.MY_SCHEMA"
+	// Snowflake connection parameters
+	SnowflakeAccount    string
+	SnowflakeUser       string
+	SnowflakePrivateKey string // Base64-encoded or PEM private key
+	SnowflakeDatabase   string
+	SnowflakeSchema     string
+
+	// PostgreSQL connection
+	PostgresDSN string
+
+	// Computed: DATABASE.SCHEMA for cache log location
+	SnowflakeDatabaseSchema string
 
 	// SQL queries for cache loading
 	SnowflakeSQL string
@@ -48,20 +56,39 @@ func DefaultConfig() *Config {
 func LoadFromEnv() (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Required: Database connections
-	cfg.SnowflakeDSN = os.Getenv("SNOWFLAKE_DSN")
-	if cfg.SnowflakeDSN == "" {
-		return nil, fmt.Errorf("SNOWFLAKE_DSN environment variable is required")
+	// Required: Snowflake connection parameters
+	cfg.SnowflakeAccount = os.Getenv("SNOWFLAKE_ACCOUNT")
+	if cfg.SnowflakeAccount == "" {
+		return nil, fmt.Errorf("SNOWFLAKE_ACCOUNT environment variable is required")
 	}
 
+	cfg.SnowflakeUser = os.Getenv("SNOWFLAKE_USER")
+	if cfg.SnowflakeUser == "" {
+		return nil, fmt.Errorf("SNOWFLAKE_USER environment variable is required")
+	}
+
+	cfg.SnowflakePrivateKey = os.Getenv("SNOWFLAKE_PRIVATE_KEY")
+	if cfg.SnowflakePrivateKey == "" {
+		return nil, fmt.Errorf("SNOWFLAKE_PRIVATE_KEY environment variable is required")
+	}
+
+	cfg.SnowflakeDatabase = os.Getenv("SNOWFLAKE_DATABASE")
+	if cfg.SnowflakeDatabase == "" {
+		return nil, fmt.Errorf("SNOWFLAKE_DATABASE environment variable is required")
+	}
+
+	cfg.SnowflakeSchema = os.Getenv("SNOWFLAKE_SCHEMA")
+	if cfg.SnowflakeSchema == "" {
+		return nil, fmt.Errorf("SNOWFLAKE_SCHEMA environment variable is required")
+	}
+
+	// Compute DATABASE.SCHEMA for cache log location
+	cfg.SnowflakeDatabaseSchema = cfg.SnowflakeDatabase + "." + cfg.SnowflakeSchema
+
+	// Required: PostgreSQL connection string
 	cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
 	if cfg.PostgresDSN == "" {
 		return nil, fmt.Errorf("POSTGRES_DSN environment variable is required")
-	}
-
-	cfg.SnowflakeDatabaseSchema = os.Getenv("SNOWFLAKE_DATABASE_SCHEMA")
-	if cfg.SnowflakeDatabaseSchema == "" {
-		return nil, fmt.Errorf("SNOWFLAKE_DATABASE_SCHEMA environment variable is required")
 	}
 
 	// Required: SQL queries
@@ -166,4 +193,3 @@ func trimSpace(s string) string {
 	}
 	return s[start:end]
 }
-

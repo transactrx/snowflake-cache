@@ -8,9 +8,17 @@ variable "cpu_units" {
 }
 
 //=[DATABASE CONFIGURATION]================================================================================
-variable "snowflake_database_schema" {
+variable "snowflake_account" {
   type        = string
-  description = "Snowflake database.schema (e.g., MY_DATABASE.MY_SCHEMA)"
+  description = "Snowflake account identifier (e.g., dwwwkin-east)"
+}
+variable "snowflake_database" {
+  type        = string
+  description = "Snowflake database name (e.g., CPE_DEV)"
+}
+variable "snowflake_schema" {
+  type        = string
+  description = "Snowflake schema name (e.g., DATA)"
 }
 variable "snowflake_sql" {
   type        = string
@@ -53,20 +61,14 @@ variable "log_level" {
   description = "Log level (debug, info, warn, error)"
 }
 
-resource "aws_secretsmanager_secret" "secrets" {
-  name = "${lower(var.project_name)}/secret"
+//=[EXISTING SECRETS REFERENCES]================================================================================
+// Reference existing secrets instead of creating new ones
+data "aws_secretsmanager_secret" "snowflake_secret" {
+  name = "SNOWFLAKE_CONNECTION_BATCH_WR"
 }
 
-resource "aws_secretsmanager_secret_version" "secret_defaults" {
-  secret_id = aws_secretsmanager_secret.secrets.id
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
-
-  secret_string = jsonencode({
-    SNOWFLAKE_DSN = "snowflake_dsn_placeholder"
-    POSTGRES_DSN  = "postgres_dsn_placeholder"
-  })
+data "aws_secretsmanager_secret" "postgres_secret" {
+  name = "DB_URL_RULE_DATA_READ"
 }
 
 variable "image_full" {}
@@ -83,9 +85,14 @@ module "main-Container" {
   memory        = var.memory_mb - 1
   logGroup      = aws_cloudwatch_log_group.logGroup.name
   envVariables = [
-    { name = "SNOWFLAKE_DATABASE_SCHEMA", value = var.snowflake_database_schema },
+    # Snowflake connection parameters (non-secret) - warehouse/role use user defaults
+    { name = "SNOWFLAKE_ACCOUNT", value = var.snowflake_account },
+    { name = "SNOWFLAKE_DATABASE", value = var.snowflake_database },
+    { name = "SNOWFLAKE_SCHEMA", value = var.snowflake_schema },
+    # SQL queries
     { name = "SNOWFLAKE_SQL", value = var.snowflake_sql },
     { name = "POSTGRES_SQL", value = var.postgres_sql },
+    # Comparison settings
     { name = "COMPARISON_INTERVAL", value = var.comparison_interval },
     { name = "CACHE_CHECK_INTERVAL", value = var.cache_check_interval },
     { name = "MAX_DETAILED_MISMATCHES", value = tostring(var.max_detailed_mismatches) },
@@ -95,8 +102,11 @@ module "main-Container" {
   ]
   portMappings = []
   secrets = [
-    { name = "SNOWFLAKE_DSN", valueFrom = "${aws_secretsmanager_secret.secrets.arn}:SNOWFLAKE_DSN::" },
-    { name = "POSTGRES_DSN", valueFrom = "${aws_secretsmanager_secret.secrets.arn}:POSTGRES_DSN::" },
+    # Snowflake credentials from existing secret SNOWFLAKE_CONNECTION_BATCH_WR
+    { name = "SNOWFLAKE_USER", valueFrom = "${data.aws_secretsmanager_secret.snowflake_secret.arn}:username::" },
+    { name = "SNOWFLAKE_PRIVATE_KEY", valueFrom = "${data.aws_secretsmanager_secret.snowflake_secret.arn}:private_key::" },
+    # PostgreSQL connection string from existing secret DB_URL_RULE_DATA_READ
+    { name = "POSTGRES_DSN", valueFrom = "${data.aws_secretsmanager_secret.postgres_secret.arn}:DB_URL::" },
   ]
 }
 

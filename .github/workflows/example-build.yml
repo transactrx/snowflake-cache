@@ -109,7 +109,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: '1.24'
           cache: true
           cache-dependency-path: snowflake-cache/example-service/go.sum
 
@@ -157,8 +157,12 @@ jobs:
           export TF_VAR_desired_count=${{ vars.DESIRED_COUNT || 1 }}
           export TF_VAR_cpu_units=${{ vars.CPU_UNITS || 256 }}
 
-          # Database configuration (required)
-          export TF_VAR_snowflake_database_schema='${{ vars.SNOWFLAKE_DATABASE_SCHEMA }}'
+          # Snowflake connection configuration (required) - warehouse/role use user defaults
+          export TF_VAR_snowflake_account='${{ vars.SNOWFLAKE_ACCOUNT }}'
+          export TF_VAR_snowflake_database='${{ vars.SNOWFLAKE_DATABASE }}'
+          export TF_VAR_snowflake_schema='${{ vars.SNOWFLAKE_SCHEMA }}'
+
+          # SQL queries (required)
           export TF_VAR_snowflake_sql='${{ vars.SNOWFLAKE_SQL }}'
           export TF_VAR_postgres_sql='${{ vars.POSTGRES_SQL }}'
 
@@ -166,7 +170,7 @@ jobs:
           export TF_VAR_comparison_interval='${{ vars.COMPARISON_INTERVAL || '5m' }}'
           export TF_VAR_cache_check_interval='${{ vars.CACHE_CHECK_INTERVAL || '60s' }}'
           export TF_VAR_max_detailed_mismatches=${{ vars.MAX_DETAILED_MISMATCHES || 100 }}
-          export TF_VAR_monitored_tables='${{ vars.MONITORED_TABLES || 'API_KEYS' }}'
+          export TF_VAR_monitored_tables='${{ vars.MONITORED_TABLES || 'PHARMACY_SWITCH_SERVICE' }}'
           export TF_VAR_key_field='${{ vars.KEY_FIELD || 'Key' }}'
           export TF_VAR_log_level='${{ vars.LOG_LEVEL || 'info' }}'
 

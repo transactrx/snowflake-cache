@@ -2,13 +2,18 @@ package cache
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/snowflakedb/gosnowflake"
+	sf "github.com/snowflakedb/gosnowflake"
 
 	"github.com/transactrx/snowflake-cache/example-service/config"
 	"github.com/transactrx/snowflake-cache/example-service/models"
@@ -39,19 +44,11 @@ func NewCacheManager(cfg *config.Config, logger *log.Logger) (*CacheManager, err
 		logger: logger,
 	}
 
-	// Initialize Snowflake connection
+	// Initialize Snowflake connection using private key authentication
 	logger.Println("Connecting to Snowflake...")
-	snowflakeDB, err := sql.Open("snowflake", cfg.SnowflakeDSN)
+	snowflakeDB, err := connectSnowflake(cfg, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open Snowflake connection: %w", err)
-	}
-
-	// Test the Snowflake connection
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := snowflakeDB.PingContext(ctx); err != nil {
-		snowflakeDB.Close()
-		return nil, fmt.Errorf("failed to ping Snowflake: %w", err)
+		return nil, fmt.Errorf("failed to connect to Snowflake: %w", err)
 	}
 	manager.snowflakeDB = snowflakeDB
 	logger.Println("Snowflake connection established")
@@ -132,3 +129,96 @@ func (m *CacheManager) Close() {
 	}
 }
 
+// connectSnowflake establishes a connection to Snowflake using private key authentication.
+func connectSnowflake(cfg *config.Config, logger *log.Logger) (*sql.DB, error) {
+	// Parse the private key
+	privateKey, err := parsePrivateKey(cfg.SnowflakePrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Snowflake private key: %w", err)
+	}
+
+	// Build Snowflake config - warehouse and role are omitted to use user defaults
+	sfCfg := &sf.Config{
+		Account:       cfg.SnowflakeAccount,
+		User:          cfg.SnowflakeUser,
+		Database:      cfg.SnowflakeDatabase,
+		Schema:        cfg.SnowflakeSchema,
+		Authenticator: sf.AuthTypeJwt,
+		PrivateKey:    privateKey,
+	}
+
+	// Build DSN from config
+	dsn, err := sf.DSN(sfCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Snowflake DSN: %w", err)
+	}
+
+	logger.Printf("Connecting to Snowflake account: %s, database: %s, schema: %s",
+		cfg.SnowflakeAccount, cfg.SnowflakeDatabase, cfg.SnowflakeSchema)
+
+	// Open connection
+	db, err := sql.Open("snowflake", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open Snowflake connection: %w", err)
+	}
+
+	// Test the connection
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to ping Snowflake: %w", err)
+	}
+
+	return db, nil
+}
+
+// parsePrivateKey parses a private key from various formats:
+// - Base64-encoded PKCS8 DER
+// - PEM format (with or without escaped newlines)
+func parsePrivateKey(keyData string) (*rsa.PrivateKey, error) {
+	// First, try to handle escaped newlines (common in environment variables)
+	keyData = strings.ReplaceAll(keyData, "\\n", "\n")
+
+	// Try parsing as PEM first
+	block, _ := pem.Decode([]byte(keyData))
+	if block != nil {
+		return parsePKCS8DER(block.Bytes)
+	}
+
+	// Try base64 decoding (for raw base64-encoded PKCS8 DER)
+	decoded, err := base64.StdEncoding.DecodeString(keyData)
+	if err != nil {
+		// Try base64 URL encoding
+		decoded, err = base64.URLEncoding.DecodeString(keyData)
+		if err != nil {
+			// Try raw base64 without padding
+			decoded, err = base64.RawStdEncoding.DecodeString(keyData)
+			if err != nil {
+				return nil, fmt.Errorf("private key is neither valid PEM nor base64: %w", err)
+			}
+		}
+	}
+
+	return parsePKCS8DER(decoded)
+}
+
+// parsePKCS8DER parses a PKCS8 DER-encoded private key
+func parsePKCS8DER(der []byte) (*rsa.PrivateKey, error) {
+	key, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		// Try PKCS1 as fallback
+		rsaKey, err2 := x509.ParsePKCS1PrivateKey(der)
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to parse private key (tried PKCS8 and PKCS1): PKCS8 error: %v, PKCS1 error: %v", err, err2)
+		}
+		return rsaKey, nil
+	}
+
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key is not RSA")
+	}
+
+	return rsaKey, nil
+}
