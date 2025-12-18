@@ -2,6 +2,8 @@ module github.com/transactrx/snowflake-cache/example-service
 
 go 1.24
 
+toolchain go1.24.5
+
 require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/snowflakedb/gosnowflake v1.17.0

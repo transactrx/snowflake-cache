@@ -1,18 +1,29 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+# NOTE: This Dockerfile expects to be built with the build context set to the
+# parent directory containing both snowflake-cache/ and db-cache/ directories.
+# Example: docker build -f snowflake-cache/example-service/Dockerfile .
+FROM golang:1.23-alpine AS builder
 
 # Install git for fetching dependencies
 RUN apk add --no-cache git ca-certificates
 
-WORKDIR /app
+# Set up directory structure to match go.mod replace directives:
+# - /build/snowflake-cache/example-service (this service)
+# - /build/snowflake-cache (parent module) - replace: ../
+# - /build/db-cache (external dependency) - replace: ../../db-cache
+WORKDIR /build
 
-# Copy the parent module (snowflake-cache) for local dependency
-COPY go.mod go.sum ../
-COPY pkg/ ../pkg/
+# Copy the parent module (snowflake-cache)
+COPY snowflake-cache/go.mod snowflake-cache/go.sum ./snowflake-cache/
+COPY snowflake-cache/pkg/ ./snowflake-cache/pkg/
+
+# Copy db-cache dependency
+COPY db-cache/ ./db-cache/
 
 # Copy example-service files
-COPY example-service/go.mod example-service/go.sum ./
-COPY example-service/ ./
+COPY snowflake-cache/example-service/ ./snowflake-cache/example-service/
+
+WORKDIR /build/snowflake-cache/example-service
 
 # Download dependencies
 RUN go mod download
