@@ -1,31 +1,56 @@
 variable "memory_mb" {
-  type=number
+  type    = number
+  default = 512
 }
 variable "cpu_units" {
-  type=number
+  type    = number
+  default = 256
 }
 
-//=[KAFKA]================================================================================
-variable "kafkaBootstrapServer" {
-  type = string
+//=[DATABASE CONFIGURATION]================================================================================
+variable "snowflake_database_schema" {
+  type        = string
+  description = "Snowflake database.schema (e.g., MY_DATABASE.MY_SCHEMA)"
 }
-variable "KafkaGroupId" {
-  type = string
+variable "snowflake_sql" {
+  type        = string
+  description = "SQL query to load data from Snowflake"
 }
-variable "kafkaConsumerTopic" {
-  type = string
+variable "postgres_sql" {
+  type        = string
+  description = "SQL query to load data from PostgreSQL"
 }
 
-//=[OPEN SEARCH]================================================================================
-variable "openSearchURL" {
-  type = string
+//=[COMPARISON SETTINGS]================================================================================
+variable "comparison_interval" {
+  type        = string
+  default     = "5m"
+  description = "Interval between cache comparisons (Go duration format)"
 }
-variable "openSearchIndexPrefix" {
-  type = string
+variable "cache_check_interval" {
+  type        = string
+  default     = "60s"
+  description = "Interval for cache refresh checks (Go duration format)"
 }
-//Service
-variable "discardClaimsOlderThanDays" {
-  type = string
+variable "max_detailed_mismatches" {
+  type        = number
+  default     = 100
+  description = "Maximum number of detailed mismatches to log"
+}
+variable "monitored_tables" {
+  type        = string
+  default     = "API_KEYS"
+  description = "Comma-separated list of tables to monitor for cache invalidation"
+}
+variable "key_field" {
+  type        = string
+  default     = "Key"
+  description = "Field name used as the cache key"
+}
+variable "log_level" {
+  type        = string
+  default     = "info"
+  description = "Log level (debug, info, warn, error)"
 }
 
 resource "aws_secretsmanager_secret" "secrets" {
@@ -39,8 +64,8 @@ resource "aws_secretsmanager_secret_version" "secret_defaults" {
   }
 
   secret_string = jsonencode({
-    OPEN_SEARCH_USER = "open_search_user_name"
-    OPEN_SEARCH_PASS = "open_search_password"
+    SNOWFLAKE_DSN = "snowflake_dsn_placeholder"
+    POSTGRES_DSN  = "postgres_dsn_placeholder"
   })
 }
 
@@ -58,19 +83,20 @@ module "main-Container" {
   memory        = var.memory_mb - 1
   logGroup      = aws_cloudwatch_log_group.logGroup.name
   envVariables = [
-    { name = "KAFKA_TOPIC", value = var.kafkaConsumerTopic},
-    { name = "KAFKA_URL", value = var.kafkaBootstrapServer},
-    { name = "KAFKA_CONSUMER_GROUP", value = var.KafkaGroupId},
-    { name = "OPEN_SEARCH_URL", value = var.openSearchURL},
-    { name = "OPENSEARCH_INDEX_PREFIX", value = var.openSearchIndexPrefix},
-    { name = "DISCARD_CLAIMS_OLDER_THAN_IN_DAYS", value = var.discardClaimsOlderThanDays},
+    { name = "SNOWFLAKE_DATABASE_SCHEMA", value = var.snowflake_database_schema },
+    { name = "SNOWFLAKE_SQL", value = var.snowflake_sql },
+    { name = "POSTGRES_SQL", value = var.postgres_sql },
+    { name = "COMPARISON_INTERVAL", value = var.comparison_interval },
+    { name = "CACHE_CHECK_INTERVAL", value = var.cache_check_interval },
+    { name = "MAX_DETAILED_MISMATCHES", value = tostring(var.max_detailed_mismatches) },
+    { name = "MONITORED_TABLES", value = var.monitored_tables },
+    { name = "KEY_FIELD", value = var.key_field },
+    { name = "LOG_LEVEL", value = var.log_level },
   ]
-  portMappings = [
-    { containerPort = 8080 }
-  ]
+  portMappings = []
   secrets = [
-    { name= "OPEN_SEARCH_USER", valueFrom="${aws_secretsmanager_secret.secrets.arn}:OPEN_SEARCH_USER::" },
-    { name= "OPEN_SEARCH_PASS", valueFrom="${aws_secretsmanager_secret.secrets.arn}:OPEN_SEARCH_PASS::" },
+    { name = "SNOWFLAKE_DSN", valueFrom = "${aws_secretsmanager_secret.secrets.arn}:SNOWFLAKE_DSN::" },
+    { name = "POSTGRES_DSN", valueFrom = "${aws_secretsmanager_secret.secrets.arn}:POSTGRES_DSN::" },
   ]
 }
 
@@ -85,42 +111,4 @@ module "testTaskDef" {
 
 output "taskDef" {
   value = module.testTaskDef
-}
-
-resource "aws_iam_policy" "msk_iam_auth_policy" {
-  name        = "${lower(var.project_name)}-msk-iam-auth-policy"
-  description = "IAM policy for MSK IAM authentication"
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "kafka-cluster:Connect",
-          "kafka-cluster:DescribeCluster",
-          "kafka-cluster:*Group*"
-        ],
-        Resource = [
-          "*"
-        ]
-      },
-      {
-        Effect = "Allow",
-        Action = [
-          "kafka-cluster:*Topic",
-          "kafka-cluster:WriteData",
-          "kafka-cluster:ReadData"
-        ],
-        Resource = [
-          "arn:aws:kafka:*:*:topic/*/*/${var.kafkaConsumerTopic}*"
-        ]
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "task_role_msk_attach" {
-  role       = module.testTaskDef.task_role_name
-  policy_arn = aws_iam_policy.msk_iam_auth_policy.arn
 }
