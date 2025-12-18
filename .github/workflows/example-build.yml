@@ -1,0 +1,157 @@
+name: Build
+on:
+  push:
+    branches:
+      - Development
+      - Production
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - Development
+  workflow_dispatch:
+
+jobs:
+  SetDeployEnv:
+    name: 'Set Deployment Environment'
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_env: ${{ steps.determine-env.outputs.environment }}
+
+    steps:
+      - name: Determine Environment
+        id: determine-env
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            ENV_NAME="${{ github.base_ref }}"
+          else
+            ENV_NAME="${GITHUB_REF##*/}"
+          fi
+          echo "environment=$ENV_NAME" >> $GITHUB_OUTPUT
+          echo "TARGET_ENVIRONMENT=$ENV_NAME" >> $GITHUB_ENV
+
+  test:
+    name: 'Run Unit Tests and Quality Checks'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.3'
+          cache: true
+
+      - name: Run pre-push runs all tests and quality checks
+        run: make pre-push
+
+      - name: Generate coverage report
+        run: make test-coverage-func
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}')
+          echo "## Test Coverage Report 📊"
+          echo ""
+          echo "**Total Coverage:** $COVERAGE"
+          echo ""
+          echo "### Coverage by Package:"
+          echo "```"
+          go tool cover -func=coverage.out | grep -E "(pkg/|cmd/|total:)"
+          echo "```"
+          echo ""
+          echo "✅ All tests passed!"
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [SetDeployEnv, test]  # Build only runs if test job succeeds
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: ${{ needs.SetDeployEnv.outputs.deploy_env }}
+
+    steps:
+      - name: Setup Environment
+        run: |
+          # Use the target environment (not source branch) for AWS role
+          targetEnv="${{ needs.SetDeployEnv.outputs.deploy_env }}"
+          envUpper=$(echo ${targetEnv^^})
+          role_name_prefix="RAS_DATA_SERVICES_"
+          role_name_suffix="_AWS_ROLE_ARN"
+          AWS_ROLE=$role_name_prefix$envUpper$role_name_suffix
+          echo "AWS_ROLE=$(echo $AWS_ROLE)"  >> $GITHUB_ENV
+          REPO_NAME=$(echo ${GITHUB_REPOSITORY##*/})
+          echo "REPO_NAME=$(echo $REPO_NAME)"  >> $GITHUB_ENV
+          # add env vars for terraform
+          echo '${{ toJSON(vars) }}'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets[env.AWS_ROLE] }}
+          role-session-name: ${{ env.REPO_NAME }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Configure Terraform Backend
+        run: |
+          bucket=$(aws ssm get-parameter --name terraform_state_bucket_name|jq -r .Parameter.Value)
+          lock_table=$(aws ssm get-parameter --name terraform_lock_table|jq -r .Parameter.Value)
+          cd terraform
+          terraform init -backend-config="bucket=$bucket" -backend-config="key=$REPO_NAME"  -backend-config="region=us-east-1"  -backend-config="dynamodb_table=$lock_table" -input=false -upgrade
+
+      - name: Deploy terraform Resources
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{github.repository}}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          DOCKER_REPO=$( echo "${ECR_REPOSITORY,,}")
+          export TF_VAR_project_name=$REPO_NAME
+          export TF_VAR_aws_region=us-east-1
+         
+          DEPLOY_ENV="${{ needs.SetDeployEnv.outputs.deploy_env }}"
+          ECS_CLUSTER_SUFFIX=$(echo "$DEPLOY_ENV" | tr '[:upper:]' '[:lower:]' | sed 's/development/dev/;s/production/prod/')
+          export TF_VAR_ecs_cluster_name="rasdataservices-$ECS_CLUSTER_SUFFIX"
+
+          export TF_VAR_memory_mb=${{ vars.MEMORY_MB }}
+          export TF_VAR_desired_count=${{ vars.DESIRED_COUNT }}
+          export TF_VAR_cpu_units=${{ vars.CPU_UNITS }}            
+          export TF_VAR_auto_scaler_config=${{ vars.AUTO_SCALER_CONFIG }}
+           
+          export TF_VAR_kafkaBootstrapServer=${{ vars.KAFKA_URL }}
+          export TF_VAR_KafkaGroupId=${{ vars.KAFKA_CONSUMER_GROUP }}
+          export TF_VAR_kafkaConsumerTopic=${{ vars.KAFKA_TOPIC }}
+
+          export TF_VAR_openSearchURL=${{vars.OPEN_SEARCH_URL}}
+          export TF_VAR_openSearchIndexPrefix=${{vars.OPENSEARCH_INDEX_PREFIX}}
+          export TF_VAR_discardClaimsOlderThanDays=${{vars.DISCARD_CLAIMS_OLDER_THAN_IN_DAYS}}
+
+          export TF_VAR_image_full=$(echo "$ECR_REGISTRY/$DOCKER_REPO:$IMAGE_TAG")
+
+          cd terraform
+          terraform apply -input=false -auto-approve
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{github.repository}}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          DOCKER_REPO=$( echo "${ECR_REPOSITORY,,}")
+          echo $DOCKER_REPO
+          docker build -t $ECR_REGISTRY/$DOCKER_REPO:latest .
+          docker build -t $ECR_REGISTRY/$DOCKER_REPO:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$DOCKER_REPO:latest
+          docker push $ECR_REGISTRY/$DOCKER_REPO:$IMAGE_TAG
