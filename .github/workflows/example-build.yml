@@ -124,9 +124,40 @@ jobs:
           terraform init -backend-config="bucket=$bucket" -backend-config="key=$PROJECT_NAME"  -backend-config="region=us-east-1"  -backend-config="dynamodb_table=$lock_table" -input=false -upgrade
 
       # Create ECR repository FIRST (before trying to push images)
+      # Note: Terraform validates all variables even with -target, so we must set them all
       - name: Create ECR Repository
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
+          ECR_REPO_NAME="transactrx/$PROJECT_NAME"
           export TF_VAR_project_name=$PROJECT_NAME
+          export TF_VAR_aws_region=us-east-1
+
+          DEPLOY_ENV="${{ needs.SetDeployEnv.outputs.deploy_env }}"
+          ECS_CLUSTER_SUFFIX=$(echo "$DEPLOY_ENV" | tr '[:upper:]' '[:lower:]' | sed 's/development/dev/;s/production/prod/')
+          export TF_VAR_ecs_cluster_name="rasdataservices-$ECS_CLUSTER_SUFFIX"
+
+          export TF_VAR_memory_mb=${{ vars.MEMORY_MB || 512 }}
+          export TF_VAR_desired_count=${{ vars.DESIRED_COUNT || 1 }}
+          export TF_VAR_cpu_units=${{ vars.CPU_UNITS || 256 }}
+
+          export TF_VAR_snowflake_account='${{ vars.SNOWFLAKE_ACCOUNT }}'
+          export TF_VAR_snowflake_database='${{ vars.SNOWFLAKE_DATABASE }}'
+          export TF_VAR_snowflake_schema='${{ vars.SNOWFLAKE_SCHEMA }}'
+
+          export TF_VAR_snowflake_sql='${{ vars.SNOWFLAKE_SQL }}'
+          export TF_VAR_postgres_sql='${{ vars.POSTGRES_SQL }}'
+
+          export TF_VAR_comparison_interval='${{ vars.COMPARISON_INTERVAL || '5m' }}'
+          export TF_VAR_cache_check_interval='${{ vars.CACHE_CHECK_INTERVAL || '60s' }}'
+          export TF_VAR_max_detailed_mismatches=${{ vars.MAX_DETAILED_MISMATCHES || 100 }}
+          export TF_VAR_monitored_tables='${{ vars.MONITORED_TABLES || 'PHARMACY_SWITCH_SERVICE' }}'
+          export TF_VAR_key_field='${{ vars.KEY_FIELD || 'Key' }}'
+          export TF_VAR_log_level='${{ vars.LOG_LEVEL || 'info' }}'
+
+          export TF_VAR_image_full=$(echo "$ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG")
+
           cd snowflake-cache/example-service/terraform
           terraform apply -input=false -auto-approve -target=aws_ecr_repository.repository
 
