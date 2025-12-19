@@ -2,7 +2,7 @@
 # NOTE: This Dockerfile expects to be built with the build context set to the
 # parent directory containing both snowflake-cache/ and db-cache/ directories.
 # Example: docker build -f snowflake-cache/example-service/Dockerfile .
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install git for fetching dependencies
 RUN apk add --no-cache git ca-certificates
