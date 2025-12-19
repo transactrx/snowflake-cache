@@ -14,6 +14,14 @@ import (
 	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
+// DefaultLogSchema is the canonical Snowflake schema where CACHE_LOG lives.
+// All services using this library share this schema for change tracking,
+// while their actual data tables may reside in different schemas.
+// This allows a single CACHE_LOG / REGISTERCACHETABLE setup to support many
+// different application schemas without requiring each caller to supply the
+// log schema explicitly.
+const DefaultLogSchema = "DB_CACHE"
+
 // DbCache is the public interface that defines the contract for cache operations.
 // This interface is implemented by the Snowflake cache implementation.
 type DbCache[T any] interface {
@@ -102,20 +110,37 @@ func (c *dbCache[T]) getDbStaleCheckValue() (*string, error) {
 	q := strings.ReplaceAll(base, "CACHE_LOG", logTable)
 
 	// Build bind args (one per monitored table).
-	// Important: The heartbeat writes fully qualified table names into CACHE_LOG (DB.SCHEMA.TABLE).
-	// We must match that format when querying by TABLE_NAME, otherwise we would never see updates.
-	args := make([]any, 0, len(c.monitoredTables))
-	for _, t := range c.monitoredTables {
-		var tableIdentifier string
-		switch {
-		case c.logDatabase != "" && c.logSchema != "":
-			tableIdentifier = fmt.Sprintf("%s.%s.%s", strings.ToUpper(c.logDatabase), strings.ToUpper(c.logSchema), strings.ToUpper(t))
-		case c.logSchema != "":
-			tableIdentifier = fmt.Sprintf("%s.%s", strings.ToUpper(c.logSchema), strings.ToUpper(t))
-		default:
-			tableIdentifier = strings.ToUpper(t)
+	// Important: The heartbeat writes fully qualified table names into CACHE_LOG
+	// (DB.SCHEMA.TABLE). We must match that format when querying by TABLE_NAME,
+	// otherwise we would never see updates.
+	//
+	// Prefer the precomputed fingerprintTableNames (fully-qualified table names)
+	// when available so that the schema used in TABLE_NAME can differ from the
+	// schema where CACHE_LOG itself resides. This is the common production
+	// pattern where application data lives in one schema (e.g. DATA) and
+	// CACHE_LOG lives in a dedicated schema (e.g. DB_CACHE).
+	var args []any
+	if len(c.fingerprintTableNames) > 0 {
+		args = make([]any, 0, len(c.fingerprintTableNames))
+		for _, fqn := range c.fingerprintTableNames {
+			args = append(args, fqn)
 		}
-		args = append(args, tableIdentifier)
+	} else {
+		// Backwards-compatible path: fall back to constructing identifiers from
+		// the monitored table names and the configured logDatabase/logSchema.
+		args = make([]any, 0, len(c.monitoredTables))
+		for _, t := range c.monitoredTables {
+			var tableIdentifier string
+			switch {
+			case c.logDatabase != "" && c.logSchema != "":
+				tableIdentifier = fmt.Sprintf("%s.%s.%s", strings.ToUpper(c.logDatabase), strings.ToUpper(c.logSchema), strings.ToUpper(t))
+			case c.logSchema != "":
+				tableIdentifier = fmt.Sprintf("%s.%s", strings.ToUpper(c.logSchema), strings.ToUpper(t))
+			default:
+				tableIdentifier = strings.ToUpper(t)
+			}
+			args = append(args, tableIdentifier)
+		}
 	}
 
 	// Scan result
@@ -202,7 +227,10 @@ func CreateCache[T any](
 		return nil, fmt.Errorf("unsupported DB type: expected *sql.DB for Snowflake, got %T", DB)
 	}
 
-	// Parse DB_RW to extract database and schema
+	// Parse DB_RW to extract database and default data schema.
+	// Callers typically pass "DATABASE.SCHEMA" where:
+	//   - DATABASE: holds both CACHE_LOG and the application tables
+	//   - SCHEMA:   holds the application tables (e.g., DATA)
 	var database, defaultSchema string
 	if s, ok := DB_RW.(string); ok {
 		// Parse "DATABASE.SCHEMA" format or just "SCHEMA"
@@ -217,15 +245,11 @@ func CreateCache[T any](
 		return nil, fmt.Errorf("DB_RW must be a string for Snowflake (format: 'DATABASE.SCHEMA' or 'SCHEMA'), got %T", DB_RW)
 	}
 
-	// For backward compatibility: when only a schema is provided (no database),
-	// use "CACHE" as the log schema (where CACHE_LOG resides), not the defaultSchema.
-	// When database is provided, use defaultSchema as the log schema.
-	var logSchema string
-	if database == "" {
-		logSchema = "CACHE" // Default log schema for backward compatibility
-	} else {
-		logSchema = defaultSchema // Use the provided schema as log schema when database is specified
-	}
+	// Use the canonical log schema for CACHE_LOG regardless of where the
+	// application tables live. This decouples the change-log schema from the
+	// data schema so that many services (and schemas) can share a single
+	// CACHE_LOG / REGISTERCACHETABLE setup.
+	logSchema := DefaultLogSchema
 
 	// Normalize monitored tables into schema/table pairs
 	qualified := make([]SnowflakeTable, 0, len(monitoredTables))
@@ -291,7 +315,9 @@ func CreateSnowflakeCache[T any](
 			qualified = append(qualified, SnowflakeTable{Schema: defaultSchema, Table: name})
 		}
 	}
-	// Use default change-log schema "CACHE" to match test expectations
+	// Use the canonical DefaultLogSchema for CACHE_LOG so that callers do not
+	// need to specify a separate log schema. Application tables still use the
+	// provided defaultSchema for their own schema resolution.
 	return CreateSnowflakeCacheQualified[T](
 		logger,
 		db,
@@ -299,7 +325,7 @@ func CreateSnowflakeCache[T any](
 		keyField,
 		checkInterval,
 		"",
-		"CACHE",
+		DefaultLogSchema,
 		qualified,
 		sqlParams...,
 	)
@@ -340,7 +366,7 @@ func CreateCacheWithDatabase[T any](
 		keyField,
 		checkInterval,
 		strings.ToUpper(database),
-		strings.ToUpper(defaultSchema),
+		strings.ToUpper(DefaultLogSchema),
 		qualified,
 		sqlParams...,
 	)
