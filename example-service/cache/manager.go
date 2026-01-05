@@ -24,8 +24,8 @@ import (
 
 // CacheManager manages both Snowflake and PostgreSQL caches.
 type CacheManager struct {
-	SnowflakeCache snowflakecache.DbCache[models.ApiKey]
-	PostgresCache  *dbcache.DbCache[models.ApiKey]
+	SnowflakeCache snowflakecache.DbCache[models.PharmacySwitchService]
+	PostgresCache  *dbcache.DbCache[models.PharmacySwitchService]
 
 	snowflakeDB *sql.DB
 	postgresDB  *pgxpool.Pool
@@ -74,7 +74,7 @@ func NewCacheManager(cfg *config.Config, logger *log.Logger) (*CacheManager, err
 
 	// Create Snowflake cache
 	logger.Println("Initializing Snowflake cache...")
-	sfCache, err := snowflakecache.CreateCache[models.ApiKey](
+	sfCache, err := snowflakecache.CreateCache[models.PharmacySwitchService](
 		logger,
 		cfg.SnowflakeSQL,
 		cfg.MonitoredTables,
@@ -92,7 +92,7 @@ func NewCacheManager(cfg *config.Config, logger *log.Logger) (*CacheManager, err
 
 	// Create PostgreSQL cache
 	logger.Println("Initializing PostgreSQL cache...")
-	pgCache, err := dbcache.CreateCache[models.ApiKey](
+	pgCache, err := dbcache.CreateCache[models.PharmacySwitchService](
 		logger,
 		cfg.PostgresSQL,
 		cfg.MonitoredTables,

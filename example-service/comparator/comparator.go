@@ -36,7 +36,7 @@ func (r *ComparisonReport) HasDiscrepancies() bool {
 }
 
 // Compare compares data from both caches and returns a comparison report.
-func Compare(snowflakeData, postgresData []models.ApiKey) *ComparisonReport {
+func Compare(snowflakeData, postgresData []models.PharmacySwitchService) *ComparisonReport {
 	startTime := time.Now()
 
 	report := &ComparisonReport{
@@ -82,9 +82,9 @@ func Compare(snowflakeData, postgresData []models.ApiKey) *ComparisonReport {
 	return report
 }
 
-// buildKeyMap creates a map from key to ApiKey for efficient lookup.
-func buildKeyMap(data []models.ApiKey) map[string]*models.ApiKey {
-	result := make(map[string]*models.ApiKey, len(data))
+// buildKeyMap creates a map from key to PharmacySwitchService for efficient lookup.
+func buildKeyMap(data []models.PharmacySwitchService) map[string]*models.PharmacySwitchService {
+	result := make(map[string]*models.PharmacySwitchService, len(data))
 	for i := range data {
 		key := data[i].GetKeyValue()
 		if key != "" {
@@ -94,67 +94,87 @@ func buildKeyMap(data []models.ApiKey) map[string]*models.ApiKey {
 	return result
 }
 
-// compareRecords compares two ApiKey records field by field.
-func compareRecords(key string, sf, pg *models.ApiKey) []ValueMismatch {
+// compareRecords compares two PharmacySwitchService records field by field.
+func compareRecords(key string, sf, pg *models.PharmacySwitchService) []ValueMismatch {
 	var mismatches []ValueMismatch
 
-	// Compare Name
-	if !stringPtrEqual(sf.Name, pg.Name) {
+	// Compare ID
+	if !stringPtrEqual(sf.ID, pg.ID) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
-			Field:     "Name",
-			Snowflake: ptrToInterface(sf.Name),
-			Postgres:  ptrToInterface(pg.Name),
+			Field:     "ID",
+			Snowflake: ptrToInterface(sf.ID),
+			Postgres:  ptrToInterface(pg.ID),
 		})
 	}
 
-	// Compare Description
-	if !stringPtrEqual(sf.Description, pg.Description) {
+	// Compare SwitchServiceID
+	if !int64PtrEqual(sf.SwitchServiceID, pg.SwitchServiceID) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
-			Field:     "Description",
-			Snowflake: ptrToInterface(sf.Description),
-			Postgres:  ptrToInterface(pg.Description),
+			Field:     "SwitchServiceID",
+			Snowflake: int64PtrToInterface(sf.SwitchServiceID),
+			Postgres:  int64PtrToInterface(pg.SwitchServiceID),
 		})
 	}
 
-	// Compare ClientID
-	if !stringPtrEqual(sf.ClientID, pg.ClientID) {
+	// Compare Rank
+	if !int64PtrEqual(sf.Rank, pg.Rank) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
-			Field:     "ClientID",
-			Snowflake: ptrToInterface(sf.ClientID),
-			Postgres:  ptrToInterface(pg.ClientID),
+			Field:     "Rank",
+			Snowflake: int64PtrToInterface(sf.Rank),
+			Postgres:  int64PtrToInterface(pg.Rank),
 		})
 	}
 
-	// Compare Configuration
-	if !stringPtrEqual(sf.Configuration, pg.Configuration) {
+	// Compare CopayProgramType
+	if !stringPtrEqual(sf.CopayProgramType, pg.CopayProgramType) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
-			Field:     "Configuration",
-			Snowflake: ptrToInterface(sf.Configuration),
-			Postgres:  ptrToInterface(pg.Configuration),
+			Field:     "CopayProgramType",
+			Snowflake: ptrToInterface(sf.CopayProgramType),
+			Postgres:  ptrToInterface(pg.CopayProgramType),
 		})
 	}
 
-	// Compare Volumes
-	if !stringPtrEqual(sf.Volumes, pg.Volumes) {
+	// Compare Enabled
+	if !boolPtrEqual(sf.Enabled, pg.Enabled) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
-			Field:     "Volumes",
-			Snowflake: ptrToInterface(sf.Volumes),
-			Postgres:  ptrToInterface(pg.Volumes),
+			Field:     "Enabled",
+			Snowflake: boolPtrToInterface(sf.Enabled),
+			Postgres:  boolPtrToInterface(pg.Enabled),
 		})
 	}
 
-	// Compare MaxDailyRate
-	if !int64PtrEqual(sf.MaxDailyRate, pg.MaxDailyRate) {
+	// Compare Reason
+	if !stringPtrEqual(sf.Reason, pg.Reason) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
-			Field:     "MaxDailyRate",
-			Snowflake: int64PtrToInterface(sf.MaxDailyRate),
-			Postgres:  int64PtrToInterface(pg.MaxDailyRate),
+			Field:     "Reason",
+			Snowflake: ptrToInterface(sf.Reason),
+			Postgres:  ptrToInterface(pg.Reason),
+		})
+	}
+
+	// Compare Version
+	if !int64PtrEqual(sf.Version, pg.Version) {
+		mismatches = append(mismatches, ValueMismatch{
+			Key:       key,
+			Field:     "Version",
+			Snowflake: int64PtrToInterface(sf.Version),
+			Postgres:  int64PtrToInterface(pg.Version),
+		})
+	}
+
+	// Compare PPERuleBaseID
+	if !stringPtrEqual(sf.PPERuleBaseID, pg.PPERuleBaseID) {
+		mismatches = append(mismatches, ValueMismatch{
+			Key:       key,
+			Field:     "PPERuleBaseID",
+			Snowflake: ptrToInterface(sf.PPERuleBaseID),
+			Postgres:  ptrToInterface(pg.PPERuleBaseID),
 		})
 	}
 
@@ -199,4 +219,24 @@ func int64PtrToInterface(i *int64) interface{} {
 		return nil
 	}
 	return *i
+}
+
+// boolPtrEqual compares two bool pointers.
+// Returns true if both are nil, or both are non-nil with equal values.
+func boolPtrEqual(a, b *bool) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// boolPtrToInterface converts a bool pointer to interface{} for JSON serialization.
+func boolPtrToInterface(b *bool) interface{} {
+	if b == nil {
+		return nil
+	}
+	return *b
 }
