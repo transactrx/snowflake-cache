@@ -172,7 +172,7 @@ jobs:
           cd snowflake-cache/example-service/terraform
           terraform apply -input=false -auto-approve -target=aws_ecr_repository.repository
 
-      # Now build and push image to the newly created ECR repository
+      # Now build and push image to the newly created ECR repo
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
