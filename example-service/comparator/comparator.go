@@ -99,12 +99,12 @@ func compareRecords(key string, sf, pg *models.PharmacySwitchService) []ValueMis
 	var mismatches []ValueMismatch
 
 	// Compare ID
-	if !stringPtrEqual(sf.ID, pg.ID) {
+	if !int64PtrEqual(sf.ID, pg.ID) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
 			Field:     "ID",
-			Snowflake: ptrToInterface(sf.ID),
-			Postgres:  ptrToInterface(pg.ID),
+			Snowflake: int64PtrToInterface(sf.ID),
+			Postgres:  int64PtrToInterface(pg.ID),
 		})
 	}
 
@@ -158,23 +158,13 @@ func compareRecords(key string, sf, pg *models.PharmacySwitchService) []ValueMis
 		})
 	}
 
-	// Compare Version
-	if !int64PtrEqual(sf.Version, pg.Version) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "Version",
-			Snowflake: int64PtrToInterface(sf.Version),
-			Postgres:  int64PtrToInterface(pg.Version),
-		})
-	}
-
 	// Compare PPERuleBaseID
-	if !stringPtrEqual(sf.PPERuleBaseID, pg.PPERuleBaseID) {
+	if !int64PtrEqual(sf.PPERuleBaseID, pg.PPERuleBaseID) {
 		mismatches = append(mismatches, ValueMismatch{
 			Key:       key,
 			Field:     "PPERuleBaseID",
-			Snowflake: ptrToInterface(sf.PPERuleBaseID),
-			Postgres:  ptrToInterface(pg.PPERuleBaseID),
+			Snowflake: int64PtrToInterface(sf.PPERuleBaseID),
+			Postgres:  int64PtrToInterface(pg.PPERuleBaseID),
 		})
 	}
 
