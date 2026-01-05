@@ -174,8 +174,9 @@ func connectSnowflake(cfg *config.Config, logger *log.Logger) (*sql.DB, error) {
 }
 
 // parsePrivateKey parses a private key from various formats:
-// - Base64-encoded PKCS8 DER
 // - PEM format (with or without escaped newlines)
+// - Base64-encoded PEM (the entire PEM file is base64 encoded)
+// - Base64-encoded PKCS8/PKCS1 DER
 func parsePrivateKey(keyData string) (*rsa.PrivateKey, error) {
 	// First, try to handle escaped newlines (common in environment variables)
 	keyData = strings.ReplaceAll(keyData, "\\n", "\n")
@@ -186,7 +187,7 @@ func parsePrivateKey(keyData string) (*rsa.PrivateKey, error) {
 		return parsePKCS8DER(block.Bytes)
 	}
 
-	// Try base64 decoding (for raw base64-encoded PKCS8 DER)
+	// Try base64 decoding - could be base64-encoded PEM or base64-encoded DER
 	decoded, err := base64.StdEncoding.DecodeString(keyData)
 	if err != nil {
 		// Try base64 URL encoding
@@ -200,6 +201,16 @@ func parsePrivateKey(keyData string) (*rsa.PrivateKey, error) {
 		}
 	}
 
+	// Check if the decoded data is a PEM (base64-encoded PEM case)
+	// This handles the case where the entire PEM file was base64 encoded
+	decodedStr := string(decoded)
+	decodedStr = strings.ReplaceAll(decodedStr, "\\n", "\n")
+	block, _ = pem.Decode([]byte(decodedStr))
+	if block != nil {
+		return parsePKCS8DER(block.Bytes)
+	}
+
+	// Otherwise, try parsing the decoded bytes directly as DER
 	return parsePKCS8DER(decoded)
 }
 
