@@ -164,7 +164,7 @@ jobs:
           export TF_VAR_cache_check_interval='60s'
           export TF_VAR_max_detailed_mismatches=100
           export TF_VAR_monitored_tables='PHARMACY_SWITCH_SERVICE'
-          export TF_VAR_key_field='PHARMACY_ID'
+          export TF_VAR_key_field='PharmacyID'
           export TF_VAR_log_level='info'
 
           export TF_VAR_image_full=$(echo "$ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG")
@@ -220,7 +220,7 @@ jobs:
           export TF_VAR_cache_check_interval='60s'
           export TF_VAR_max_detailed_mismatches=100
           export TF_VAR_monitored_tables='PHARMACY_SWITCH_SERVICE'
-          export TF_VAR_key_field='PHARMACY_ID'
+          export TF_VAR_key_field='PharmacyID'
           export TF_VAR_log_level='info'
 
           export TF_VAR_image_full=$(echo "$ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG")
