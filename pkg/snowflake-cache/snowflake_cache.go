@@ -44,18 +44,18 @@ type SnowflakeTable struct {
 // If the fingerprint differs from the last seen value, it reloads the dataset
 // using the provided SQL and rebuilds an index of key -> []T.
 type dbCache[T any] struct {
-	mutex           sync.RWMutex
-	db              any
-	keyCache        map[string][]T
-	monitoredTables []string
+	mutex                 sync.RWMutex
+	db                    any
+	keyCache              map[string][]T
+	monitoredTables       []string
 	fingerprintTableNames []string
-	loadSQL         string
-	sqlParameters   []any
-	keyField        string
-	staleCheckVal   *string
-	logger          *log.Logger
-	logSchema       string
-	logDatabase     string
+	loadSQL               string
+	sqlParameters         []any
+	keyField              string
+	staleCheckVal         *string
+	logger                *log.Logger
+	logSchema             string
+	logDatabase           string
 }
 
 // Get returns the cached slice associated with the given key, or nil if missing.
@@ -483,14 +483,14 @@ func CreateSnowflakeCacheQualified[T any](
 	}
 
 	cache := &dbCache[T]{
-		db:              db,
-		loadSQL:         loadSQL,
-		sqlParameters:   sqlParams,
-		keyField:        keyField,
-		monitoredTables: tbls,
+		db:                    db,
+		loadSQL:               loadSQL,
+		sqlParameters:         sqlParams,
+		keyField:              keyField,
+		monitoredTables:       tbls,
 		fingerprintTableNames: fqnTables,
-		logger:          logger,
-		keyCache:        make(map[string][]T),
+		logger:                logger,
+		keyCache:              make(map[string][]T),
 	}
 	cache.logSchema = strings.ToUpper(logSchema)
 	cache.logDatabase = strings.ToUpper(logDatabase)
@@ -563,8 +563,18 @@ func extractKeyValue(obj any, keyField string) (string, error) {
 		}
 		f = f.Elem()
 	}
-	if f.Kind() != reflect.String {
-		return "", fmt.Errorf("key field '%s' must be string or *string", keyField)
+
+	// Convert field value to string based on its type
+	switch f.Kind() {
+	case reflect.String:
+		return f.String(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fmt.Sprintf("%d", f.Int()), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fmt.Sprintf("%d", f.Uint()), nil
+	case reflect.Float32, reflect.Float64:
+		return fmt.Sprintf("%v", f.Float()), nil
+	default:
+		return "", fmt.Errorf("key field '%s' must be string, numeric, or pointer to those types, got %s", keyField, f.Kind())
 	}
-	return f.String(), nil
 }
