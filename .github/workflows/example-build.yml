@@ -156,7 +156,7 @@ jobs:
           export TF_VAR_snowflake_schema='DATA'
 
           # SQL queries for cache comparison
-          export TF_VAR_snowflake_sql='SELECT * FROM PHARMACY_SWITCH_SERVICE'
+          export TF_VAR_snowflake_sql='SELECT ID, PHARMACY_ID, SWITCH_SERVICE_ID, RANK, COPAY_PROGRAM_TYPE, ENABLED, REASON, PPE_RULE_BASE_ID FROM PHARMACY_SWITCH_SERVICE'
           export TF_VAR_postgres_sql='SELECT id AS "ID", pharmacy_id AS "PHARMACY_ID", switch_service_id AS "SWITCH_SERVICE_ID", rank AS "RANK", copay_program_type AS "COPAY_PROGRAM_TYPE", enabled AS "ENABLED", reason AS "REASON", ppe_rule_base_id AS "PPE_RULE_BASE_ID" FROM public.pharmacy_switch_service'
 
           # Comparison settings
@@ -212,7 +212,7 @@ jobs:
           export TF_VAR_snowflake_schema='DATA'
 
           # SQL queries for cache comparison
-          export TF_VAR_snowflake_sql='SELECT * FROM PHARMACY_SWITCH_SERVICE'
+          export TF_VAR_snowflake_sql='SELECT ID, PHARMACY_ID, SWITCH_SERVICE_ID, RANK, COPAY_PROGRAM_TYPE, ENABLED, REASON, PPE_RULE_BASE_ID FROM PHARMACY_SWITCH_SERVICE'
           export TF_VAR_postgres_sql='SELECT id AS "ID", pharmacy_id AS "PHARMACY_ID", switch_service_id AS "SWITCH_SERVICE_ID", rank AS "RANK", copay_program_type AS "COPAY_PROGRAM_TYPE", enabled AS "ENABLED", reason AS "REASON", ppe_rule_base_id AS "PPE_RULE_BASE_ID" FROM public.pharmacy_switch_service'
 
           # Comparison settings
