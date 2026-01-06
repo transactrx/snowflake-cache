@@ -1,6 +1,8 @@
 package comparator
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/transactrx/snowflake-cache/example-service/models"
@@ -19,7 +21,7 @@ type ComparisonReport struct {
 	DurationMs         int64           `json:"duration_ms"`
 }
 
-// ValueMismatch represents a field-level difference between caches.
+// ValueMismatch represents a record-level difference between caches.
 type ValueMismatch struct {
 	Key       string      `json:"key"`
 	Field     string      `json:"field"`
@@ -69,9 +71,9 @@ func Compare(snowflakeData, postgresData []models.PharmacySwitchService) *Compar
 	}
 
 	// Compare values for matching keys
-	for key, sfRecord := range sfMap {
-		if pgRecord, exists := pgMap[key]; exists {
-			mismatches := compareRecords(key, sfRecord, pgRecord)
+	for key, sfRecords := range sfMap {
+		if pgRecords, exists := pgMap[key]; exists {
+			mismatches := compareRecordSets(key, sfRecords, pgRecords)
 			report.ValueMismatches = append(report.ValueMismatches, mismatches...)
 		}
 	}
@@ -82,151 +84,118 @@ func Compare(snowflakeData, postgresData []models.PharmacySwitchService) *Compar
 	return report
 }
 
-// buildKeyMap creates a map from key to PharmacySwitchService for efficient lookup.
-func buildKeyMap(data []models.PharmacySwitchService) map[string]*models.PharmacySwitchService {
-	result := make(map[string]*models.PharmacySwitchService, len(data))
+type signatureCount struct {
+	Signature string `json:"signature"`
+	Count     int    `json:"count"`
+}
+
+// buildKeyMap creates a map from key to a slice of PharmacySwitchService records.
+func buildKeyMap(data []models.PharmacySwitchService) map[string][]models.PharmacySwitchService {
+	result := make(map[string][]models.PharmacySwitchService, len(data))
 	for i := range data {
 		key := data[i].GetKeyValue()
 		if key != "" {
-			result[key] = &data[i]
+			result[key] = append(result[key], data[i])
 		}
 	}
 	return result
 }
 
-// compareRecords compares two PharmacySwitchService records field by field.
-func compareRecords(key string, sf, pg *models.PharmacySwitchService) []ValueMismatch {
+// compareRecordSets compares two sets of PharmacySwitchService rows for the same key.
+// ID is intentionally ignored because it is not stable between Postgres and Snowflake.
+func compareRecordSets(key string, sfRecords, pgRecords []models.PharmacySwitchService) []ValueMismatch {
 	var mismatches []ValueMismatch
 
-	// Compare ID
-	if !int64PtrEqual(sf.ID, pg.ID) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "ID",
-			Snowflake: int64PtrToInterface(sf.ID),
-			Postgres:  int64PtrToInterface(pg.ID),
-		})
+	sfCounts := buildSignatureCounts(sfRecords)
+	pgCounts := buildSignatureCounts(pgRecords)
+
+	for signature, sfCount := range sfCounts {
+		pgCount := pgCounts[signature]
+		if pgCount != sfCount {
+			mismatches = append(mismatches, ValueMismatch{
+				Key:   key,
+				Field: "RowSignature",
+				Snowflake: signatureCount{
+					Signature: signature,
+					Count:     sfCount,
+				},
+				Postgres: signatureCount{
+					Signature: signature,
+					Count:     pgCount,
+				},
+			})
+		}
 	}
 
-	// Compare SwitchServiceID
-	if !int64PtrEqual(sf.SwitchServiceID, pg.SwitchServiceID) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "SwitchServiceID",
-			Snowflake: int64PtrToInterface(sf.SwitchServiceID),
-			Postgres:  int64PtrToInterface(pg.SwitchServiceID),
-		})
-	}
-
-	// Compare Rank
-	if !int64PtrEqual(sf.Rank, pg.Rank) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "Rank",
-			Snowflake: int64PtrToInterface(sf.Rank),
-			Postgres:  int64PtrToInterface(pg.Rank),
-		})
-	}
-
-	// Compare CopayProgramType
-	if !stringPtrEqual(sf.CopayProgramType, pg.CopayProgramType) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "CopayProgramType",
-			Snowflake: ptrToInterface(sf.CopayProgramType),
-			Postgres:  ptrToInterface(pg.CopayProgramType),
-		})
-	}
-
-	// Compare Enabled
-	if !boolPtrEqual(sf.Enabled, pg.Enabled) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "Enabled",
-			Snowflake: boolPtrToInterface(sf.Enabled),
-			Postgres:  boolPtrToInterface(pg.Enabled),
-		})
-	}
-
-	// Compare Reason
-	if !stringPtrEqual(sf.Reason, pg.Reason) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "Reason",
-			Snowflake: ptrToInterface(sf.Reason),
-			Postgres:  ptrToInterface(pg.Reason),
-		})
-	}
-
-	// Compare PPERuleBaseID
-	if !int64PtrEqual(sf.PPERuleBaseID, pg.PPERuleBaseID) {
-		mismatches = append(mismatches, ValueMismatch{
-			Key:       key,
-			Field:     "PPERuleBaseID",
-			Snowflake: int64PtrToInterface(sf.PPERuleBaseID),
-			Postgres:  int64PtrToInterface(pg.PPERuleBaseID),
-		})
+	for signature, pgCount := range pgCounts {
+		if _, exists := sfCounts[signature]; !exists {
+			mismatches = append(mismatches, ValueMismatch{
+				Key:   key,
+				Field: "RowSignature",
+				Snowflake: signatureCount{
+					Signature: signature,
+					Count:     0,
+				},
+				Postgres: signatureCount{
+					Signature: signature,
+					Count:     pgCount,
+				},
+			})
+		}
 	}
 
 	return mismatches
 }
 
-// stringPtrEqual compares two string pointers.
-// Returns true if both are nil, or both are non-nil with equal values.
-func stringPtrEqual(a, b *string) bool {
-	if a == nil && b == nil {
-		return true
+func buildSignatureCounts(records []models.PharmacySwitchService) map[string]int {
+	counts := make(map[string]int, len(records))
+	for _, record := range records {
+		signature := buildRowSignature(record)
+		counts[signature]++
 	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
+	return counts
 }
 
-// int64PtrEqual compares two int64 pointers.
-// Returns true if both are nil, or both are non-nil with equal values.
-func int64PtrEqual(a, b *int64) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
+func buildRowSignature(record models.PharmacySwitchService) string {
+	var b strings.Builder
+	appendSignatureField(&b, "switch_service_id", int64PtrToSignature(record.SwitchServiceID))
+	appendSignatureField(&b, "rank", int64PtrToSignature(record.Rank))
+	appendSignatureField(&b, "copay_program_type", stringPtrToSignature(record.CopayProgramType))
+	appendSignatureField(&b, "enabled", boolPtrToSignature(record.Enabled))
+	appendSignatureField(&b, "reason", stringPtrToSignature(record.Reason))
+	appendSignatureField(&b, "ppe_rule_base_id", int64PtrToSignature(record.PPERuleBaseID))
+	return b.String()
 }
 
-// ptrToInterface converts a string pointer to interface{} for JSON serialization.
-func ptrToInterface(s *string) interface{} {
+func appendSignatureField(b *strings.Builder, name, value string) {
+	if b.Len() > 0 {
+		b.WriteString("|")
+	}
+	b.WriteString(name)
+	b.WriteString("=")
+	b.WriteString(value)
+}
+
+func stringPtrToSignature(s *string) string {
 	if s == nil {
-		return nil
+		return "<nil>"
 	}
-	return *s
+	return strconv.Quote(*s)
 }
 
-// int64PtrToInterface converts an int64 pointer to interface{} for JSON serialization.
-func int64PtrToInterface(i *int64) interface{} {
+func int64PtrToSignature(i *int64) string {
 	if i == nil {
-		return nil
+		return "<nil>"
 	}
-	return *i
+	return strconv.FormatInt(*i, 10)
 }
 
-// boolPtrEqual compares two bool pointers.
-// Returns true if both are nil, or both are non-nil with equal values.
-func boolPtrEqual(a, b *bool) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
-}
-
-// boolPtrToInterface converts a bool pointer to interface{} for JSON serialization.
-func boolPtrToInterface(b *bool) interface{} {
+func boolPtrToSignature(b *bool) string {
 	if b == nil {
-		return nil
+		return "<nil>"
 	}
-	return *b
+	if *b {
+		return "true"
+	}
+	return "false"
 }
