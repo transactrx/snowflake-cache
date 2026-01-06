@@ -157,7 +157,7 @@ jobs:
 
           # SQL queries for cache comparison
           export TF_VAR_snowflake_sql='SELECT * FROM PHARMACY_SWITCH_SERVICE'
-          export TF_VAR_postgres_sql='SELECT id, pharmacy_id, switch_service_id, rank, copay_program_type, enabled, reason, ppe_rule_base_id FROM public.pharmacy_switch_service'
+          export TF_VAR_postgres_sql='SELECT id AS "ID", pharmacy_id AS "PHARMACY_ID", switch_service_id AS "SWITCH_SERVICE_ID", rank AS "RANK", copay_program_type AS "COPAY_PROGRAM_TYPE", enabled AS "ENABLED", reason AS "REASON", ppe_rule_base_id AS "PPE_RULE_BASE_ID" FROM public.pharmacy_switch_service'
 
           # Comparison settings
           export TF_VAR_comparison_interval='5m'
@@ -213,7 +213,7 @@ jobs:
 
           # SQL queries for cache comparison
           export TF_VAR_snowflake_sql='SELECT * FROM PHARMACY_SWITCH_SERVICE'
-          export TF_VAR_postgres_sql='SELECT id, pharmacy_id, switch_service_id, rank, copay_program_type, enabled, reason, ppe_rule_base_id FROM public.pharmacy_switch_service'
+          export TF_VAR_postgres_sql='SELECT id AS "ID", pharmacy_id AS "PHARMACY_ID", switch_service_id AS "SWITCH_SERVICE_ID", rank AS "RANK", copay_program_type AS "COPAY_PROGRAM_TYPE", enabled AS "ENABLED", reason AS "REASON", ppe_rule_base_id AS "PPE_RULE_BASE_ID" FROM public.pharmacy_switch_service'
 
           # Comparison settings
           export TF_VAR_comparison_interval='5m'
