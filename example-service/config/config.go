@@ -34,6 +34,7 @@ type Config struct {
 	// Comparison settings
 	ComparisonInterval    time.Duration
 	MaxDetailedMismatches int
+	RefreshBeforeCompare  bool
 
 	// Logging
 	LogLevel string
@@ -45,6 +46,7 @@ func DefaultConfig() *Config {
 		ComparisonInterval:    5 * time.Minute,
 		CacheCheckInterval:    60 * time.Second,
 		MaxDetailedMismatches: 100,
+		RefreshBeforeCompare:  false,
 		LogLevel:              "info",
 		KeyField:              "Key",
 		MonitoredTables:       []string{"API_KEYS"},
@@ -127,6 +129,15 @@ func LoadFromEnv() (*Config, error) {
 			return nil, fmt.Errorf("invalid MAX_DETAILED_MISMATCHES: %w", err)
 		}
 		cfg.MaxDetailedMismatches = max
+	}
+
+	// Optional: Refresh before comparison
+	if refreshStr := os.Getenv("REFRESH_BEFORE_COMPARE"); refreshStr != "" {
+		refresh, err := strconv.ParseBool(refreshStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid REFRESH_BEFORE_COMPARE: %w", err)
+		}
+		cfg.RefreshBeforeCompare = refresh
 	}
 
 	// Optional: Log level
