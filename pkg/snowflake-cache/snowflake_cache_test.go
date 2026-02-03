@@ -21,10 +21,12 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 	}
 	defer db.Close()
 
-    // Fingerprint query expectation
-    fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE.CACHE_LOG WHERE table_name = ?"
-    mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-        WithArgs("CACHE.API_KEYS").
+	// Fingerprint query expectation: CACHE_LOG lives in the canonical
+	// DefaultLogSchema (DB_CACHE) schema, while TABLE_NAME stores the fully
+	// qualified "SCHEMA.TABLE" identifier.
+	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM DB_CACHE.CACHE_LOG WHERE table_name = ?"
+	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
+		WithArgs("DB_CACHE.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))
 
 	// Load SQL expectation
@@ -72,10 +74,11 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	}
 	defer db.Close()
 
-    // Initial fingerprint
-    fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM CACHE.CACHE_LOG WHERE table_name = ?"
-    mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-        WithArgs("CACHE.API_KEYS").
+	// Initial fingerprint: use the canonical DefaultLogSchema (DB_CACHE)
+	// for CACHE_LOG and store TABLE_NAME as "SCHEMA.TABLE".
+	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM DB_CACHE.CACHE_LOG WHERE table_name = ?"
+	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
+		WithArgs("DB_CACHE.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))
 
 	// Initial load
@@ -90,8 +93,8 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	// Cache does not require explicit Close()
 
 	// ForceRefresh should re-read fingerprint and reload
-    mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-        WithArgs("CACHE.API_KEYS").
+	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
+		WithArgs("DB_CACHE.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp2"))
 
 	// Reload expectation

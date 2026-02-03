@@ -12,7 +12,7 @@ import (
     "log"
     "time"
     _ "github.com/snowflakedb/gosnowflake" // register Snowflake driver
-    snowflakecache "github.com/transactrx/db-cache/pkg/snowflake-cache"
+    snowflakecache "github.com/transactrx/snowflake-cache/pkg/snowflake-cache"
 )
 
 type ApiKey struct {
