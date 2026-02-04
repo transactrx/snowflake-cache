@@ -23,7 +23,8 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 
 	// Fingerprint query expectation: CACHE_LOG lives in the canonical
 	// DefaultLogSchema (DB_CACHE) schema, while TABLE_NAME stores the fully
-	// qualified "SCHEMA.TABLE" identifier.
+	// qualified identifier in format "DATABASE.SCHEMA.TABLE" (when database is known)
+	// or "SCHEMA.TABLE" (when database is not provided).
 	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM DB_CACHE.CACHE_LOG WHERE table_name = ?"
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
 		WithArgs("DB_CACHE.API_KEYS").
@@ -75,7 +76,8 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	defer db.Close()
 
 	// Initial fingerprint: use the canonical DefaultLogSchema (DB_CACHE)
-	// for CACHE_LOG and store TABLE_NAME as "SCHEMA.TABLE".
+	// for CACHE_LOG. TABLE_NAME format is "DATABASE.SCHEMA.TABLE" (with database)
+	// or "SCHEMA.TABLE" (without database).
 	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM DB_CACHE.CACHE_LOG WHERE table_name = ?"
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
 		WithArgs("DB_CACHE.API_KEYS").

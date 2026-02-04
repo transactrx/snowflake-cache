@@ -46,7 +46,7 @@ func main() {
         "UserID",        // key field on struct
         5*time.Second,    // poll interval
         db,              // *sql.DB (gosnowflake)
-        "MY_DATABASE.MY_SCHEMA", // CACHE_LOG location: Database.Schema
+        "MY_SCHEMA",     // Default schema for monitored tables
     )
     if err != nil { log.Fatal(err) }
 
@@ -64,33 +64,30 @@ func main() {
 Create a `CACHE_LOG` table in your Snowflake schema to track table changes:
 
 ```sql
-CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.CACHE_LOG (
+CREATE TABLE IF NOT EXISTS MY_DATABASE.DB_CACHE.CACHE_LOG (
     ID INTEGER AUTOINCREMENT,
     TABLE_NAME VARCHAR(255) NOT NULL,
-    OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-    OPERATION_TYPE VARCHAR(10) DEFAULT 'UPDATE'
+    UPDATE_TIME TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
 );
 ```
 
-### 2. Update CACHE_LOG on Changes
+### 2. Set Up Automatic Cache Invalidation
 
-Since Snowflake doesn't support triggers, you need to update `CACHE_LOG` when monitored tables change. Options:
+Cache invalidation is handled automatically via Snowflake Streams + Task. The library handles most of this for you:
 
-**Option A: Manual Application Updates**
-```go
-// After modifying data
-db.Exec("INSERT INTO MY_DATABASE.MY_SCHEMA.API_KEYS ...")
+**What the library does automatically:**
+- When you set `export DB_CACHE_SF_REGISTER_STREAMS=true`, the library automatically creates Streams for your monitored tables on first cache creation
 
-// Manually log the change
-db.Exec("INSERT INTO MY_DATABASE.MY_SCHEMA.CACHE_LOG (TABLE_NAME, OPERATION_TIME) VALUES ('API_KEYS', CURRENT_TIMESTAMP())")
-```
+**What you need to set up once (infrastructure):**
+> **Note**: The RAS DATA Science Team has already set this up for our users. You only need to set this up if you're using this library outside of the RAS environment.
 
-**Option B: Snowflake Streams + Task (Recommended)**
-- Create Streams on monitored tables
-- Create a Task that reads from Streams and updates CACHE_LOG
-- Optionally enable automatic stream registration: `export DB_CACHE_SF_REGISTER_STREAMS=true`
+1. Create the `DB_CACHE` schema and `CACHE_LOG` table (see above)
+2. Create the `REGISTERCACHETABLE` procedure and `HEARTBEAT` procedure
+3. Create and start the `HEARTBEAT_TASK` to run the HEARTBEAT procedure on a schedule
 
-See `integration-tests/snowflake/README.md` for detailed Stream + Task setup.
+**Important**: Once set up, CACHE_LOG is updated automatically by the HEARTBEAT Task. You should never manually insert into CACHE_LOG from your application code.
+
+See `integration-tests/snowflake/README.md` for detailed setup instructions.
 
 ## API Reference
 
@@ -104,7 +101,7 @@ func CreateCache[T any](
     keyField string,
     cacheCheckInterval time.Duration,
     DB *sql.DB,
-    DB_RW string, // Format: "DATABASE.SCHEMA"
+    DB_RW string, // Format: "SCHEMA"
     SQLParams ...interface{},
 ) (DbCache[T], error)
 ```
@@ -113,10 +110,10 @@ func CreateCache[T any](
 - `logger`: Optional logger (nil uses default)
 - `SQL`: SELECT query to load cached data
 - `monitoredTables`: Table names to monitor (e.g., `[]string{"API_KEYS"}`)
-- `keyField`: Struct field name used as cache key (must be string or *string)
+- `keyField`: Struct field name used as cache key (must be string, *string, or numeric types)
 - `cacheCheckInterval`: How often to poll CACHE_LOG for changes
 - `DB`: Snowflake *sql.DB connection
-- `DB_RW`: String in "DATABASE.SCHEMA" format pointing to CACHE_LOG location
+- `DB_RW`: String in "SCHEMA" format (specifies default schema for monitored tables; CACHE_LOG always uses hardcoded DB_CACHE schema)
 - `SQLParams`: Optional query parameters
 
 ### DbCache Interface

@@ -57,15 +57,14 @@ SNOWFLAKE_PRIVATE_KEY="LS0tLS1CRUdJTi..."  # Base64 encoded or PEM format
 
 The `setupSnowflakeSchemaAndData()` function in `integration_test.go` automatically creates:
 
-> **Note:** If you want to test automatic stream registration, you need to create the `REGISTERCACHETABLE` stored procedure in your `DB_CACHE` schema and set `DB_CACHE_SF_REGISTER_STREAMS=true`. Otherwise, tests will manually update `CACHE_LOG`.
+> **Note:** If you want to test automatic stream registration, you need to create the `REGISTERCACHETABLE` stored procedure in your `DB_CACHE` schema and set `DB_CACHE_SF_REGISTER_STREAMS=true`. Otherwise, tests will manually update `CACHE_LOG` for testing purposes only (not recommended for production).
 
 1. **CACHE_LOG** - For tracking table changes (cache invalidation)
    ```sql
-   CREATE TABLE IF NOT EXISTS {DATABASE}.{SCHEMA}.CACHE_LOG (
+   CREATE TABLE IF NOT EXISTS {DATABASE}.DB_CACHE.CACHE_LOG (
        ID INTEGER AUTOINCREMENT,
        TABLE_NAME VARCHAR(255) NOT NULL,
-       OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-       OPERATION_TYPE VARCHAR(10) DEFAULT 'UPDATE'
+       UPDATE_TIME TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
    );
    ```
 
@@ -163,7 +162,7 @@ The integration tests cover:
 
 ### 3. Cache Auto-Refresh Behavior
 - Inserts new data into Snowflake
-- **Manually logs change in CACHE_LOG** (Snowflake doesn't support automatic triggers)
+- **Logs change in CACHE_LOG** (for testing; production uses Streams + Task)
 - Waits for automatic cache refresh
 - Verifies cache picks up the new data
 
@@ -233,7 +232,7 @@ TO ROLE BATCHJOB_RW_DEV;
 If the REGISTERCACHETABLE call initiated by the Go code fails (e.g., procedure doesn't exist, insufficient privileges), the cache will:
 - **Still work** - All cache operations function normally
 - **Log a warning** - You'll know stream registration failed
-- **Allow manual refresh** - You can call `cache.ForceRefresh()` or manually update `CACHE_LOG`
+- **Require manual refresh** - You'll need to call `cache.ForceRefresh()` when data changes
 
 ### Requirements for Automatic Stream Registration
 
@@ -243,19 +242,7 @@ Your Snowflake setup needs:
 - Procedure has permissions to `CREATE STREAM` on monitored tables
 - Appropriate role assignment
 
-If these aren't available, cache creation will succeed but you'll get a warning. Cache will still work - you'll just need to call `ForceRefresh()` manually or manually insert into CACHE_LOG.
-
-### Manual Approach (Still Supported)
-
-If you prefer manual control, you can still insert into CACHE_LOG yourself:
-
-```go
-// Modify data
-db.Exec("INSERT INTO API_KEYS ...")
-
-// Manually log the change
-db.Exec("INSERT INTO CACHE_LOG (TABLE_NAME) VALUES ('API_KEYS')")
-```
+If these aren't available, cache creation will succeed but you'll get a warning. Cache will still work - you'll just need to call `ForceRefresh()` after data changes to manually trigger cache reload.
 
 ## What the Tests Actually Do
 
