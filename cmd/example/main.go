@@ -23,8 +23,9 @@ func snowflakeExample() {
 	}
 	defer snowflakeDB.Close()
 
-	// For Snowflake: pass "DATABASE.SCHEMA" format as the DB_RW parameter
-	// This tells the library where to find the CACHE_LOG for cache invalidation
+	// For Snowflake: pass "SCHEMA" as the DB_RW parameter
+	// This specifies the default schema for your monitored application tables
+	// Note: CACHE_LOG always lives in the hardcoded DB_CACHE schema
 	cache, err := snowflakecache.CreateCache[ApiKey2](
 		nil, // logger (nil uses default)
 		`SELECT 
@@ -40,7 +41,7 @@ func snowflakeExample() {
 		"Key",                   // key field name
 		time.Second*60,          // check interval
 		snowflakeDB,             // Snowflake *sql.DB connection
-		"MY_DATABASE.MY_SCHEMA", // For Snowflake: "DATABASE.SCHEMA" format
+		"MY_SCHEMA",             // Default schema for monitored tables
 	)
 	if err != nil {
 		panic(err)

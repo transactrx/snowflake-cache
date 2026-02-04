@@ -45,7 +45,7 @@ func main() {
         "UserID",                // key field
         time.Second*60,          // check interval
         db,                      // Snowflake DB connection
-        "MY_DATABASE.MY_SCHEMA", // CACHE_LOG location: Database.Schema
+        "MY_SCHEMA",             // Default schema for monitored tables
     )
     if err != nil {
         log.Fatal(err)
@@ -76,8 +76,9 @@ func main() {
 - **Snowflake**: Pass `*sql.DB` as the DB parameter (created with `sql.Open("snowflake", dsn)`)
 
 ### DB_RW Parameter
-- **Snowflake**: Pass a string in `"DATABASE.SCHEMA"` format to specify where CACHE_LOG is located
-- Example: `"MY_DATABASE.MY_SCHEMA"` means CACHE_LOG is at `MY_DATABASE.MY_SCHEMA.CACHE_LOG`
+- **Snowflake**: Pass a string in `"SCHEMA"` format to specify the default schema for your **monitored application tables**
+- Example: `"MY_SCHEMA"` - uses `MY_SCHEMA` as the default schema for unqualified table names in `monitoredTables`
+- **Note**: CACHE_LOG always lives in the hardcoded `DB_CACHE` schema, not the schema you specify here
 
 ### SQL Naming
 - **Snowflake**: Uses uppercase names by default, with quoted aliases for struct mapping
@@ -116,15 +117,14 @@ go run main.go
 1. **Snowflake account** with appropriate credentials
 2. **Create CACHE_LOG** manually:
    ```sql
-   CREATE TABLE IF NOT EXISTS MY_DATABASE.MY_SCHEMA.CACHE_LOG (
+   CREATE TABLE IF NOT EXISTS MY_DATABASE.DB_CACHE.CACHE_LOG (
        ID INTEGER AUTOINCREMENT,
        TABLE_NAME VARCHAR(255) NOT NULL,
-       OPERATION_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-       OPERATION_TYPE VARCHAR(10) DEFAULT 'UPDATE'
+       UPDATE_TIME TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
    );
    ```
 
-3. **Update CACHE_LOG** when monitored tables change (see main README for options)
+3. **Set up automatic cache invalidation** - The library automatically creates Streams when `DB_CACHE_SF_REGISTER_STREAMS=true` is set. You need to create the HEARTBEAT procedure and Task (see main README for complete setup)
 
 ## See Also
 

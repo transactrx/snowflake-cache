@@ -202,10 +202,10 @@ func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
 //   - logger: optional logger; when nil, a default logger to stdout is used
 //   - SQL: SELECT query to load the dataset of type T
 //   - monitoredTables: table names as "SCHEMA.TABLE" or plain "TABLE" (uses defaultSchema from DB_RW)
-//   - keyField: exported struct field name on T used as the cache key (string or *string)
+//   - keyField: exported struct field name on T used as the cache key (string, *string, or numeric types)
 //   - cacheCheckInterval: how frequently to poll DB_CACHE_LOG for changes
 //   - DB: must be a *sql.DB connection using the gosnowflake driver
-//   - DB_RW: for Snowflake, this should be a string in "DATABASE.SCHEMA" format or just "SCHEMA"
+//   - DB_RW: for Snowflake, this should be a string in "SCHEMA" format
 //   - SQLParams: optional bind parameters for the SQL query
 //
 // Returns:
@@ -227,13 +227,12 @@ func CreateCache[T any](
 		return nil, fmt.Errorf("unsupported DB type: expected *sql.DB for Snowflake, got %T", DB)
 	}
 
-	// Parse DB_RW to extract database and default data schema.
-	// Callers typically pass "DATABASE.SCHEMA" where:
-	//   - DATABASE: holds both CACHE_LOG and the application tables
-	//   - SCHEMA:   holds the application tables (e.g., DATA)
+	// Parse DB_RW to extract default data schema.
+	// Callers should pass "SCHEMA" which specifies the default schema for application tables
+	// (e.g., "MY_SCHEMA")
 	var database, defaultSchema string
 	if s, ok := DB_RW.(string); ok {
-		// Parse "DATABASE.SCHEMA" format or just "SCHEMA"
+		// Parse "SCHEMA" format (internally can still handle "DATABASE.SCHEMA" for backwards compatibility)
 		parts := strings.Split(s, ".")
 		if len(parts) == 2 {
 			database = parts[0]
@@ -242,7 +241,7 @@ func CreateCache[T any](
 			defaultSchema = s
 		}
 	} else {
-		return nil, fmt.Errorf("DB_RW must be a string for Snowflake (format: 'DATABASE.SCHEMA' or 'SCHEMA'), got %T", DB_RW)
+		return nil, fmt.Errorf("DB_RW must be a string for Snowflake (format: 'SCHEMA'), got %T", DB_RW)
 	}
 
 	// Use the canonical log schema for CACHE_LOG regardless of where the
@@ -283,7 +282,7 @@ func CreateCache[T any](
 //   - logger: optional logger; when nil, a default logger to stdout is used
 //   - SQL: SELECT to load the dataset of type T
 //   - monitoredTables: names as "SCHEMA.TABLE" or plain "TABLE" (uses defaultSchema)
-//   - keyField: exported struct field name on T used as the cache key (string or *string)
+//   - keyField: exported struct field name on T used as the cache key (string, *string, or numeric types)
 //   - checkInterval: how frequently to poll DB_CACHE_LOG for changes
 //   - db: an initialized *sql.DB using the gosnowflake driver
 //   - signalSchema: schema where DB_CACHE_LOG resides (e.g., "UTILS")
@@ -529,7 +528,8 @@ func CreateSnowflakeCacheQualified[T any](
 }
 
 // extractKeyValue returns a string value from the named exported struct field.
-// The field may be of type string or *string. When pointer, it must be non-nil.
+// The field may be of type string, *string, or numeric types (int, uint, float).
+// When pointer, it must be non-nil.
 func extractKeyValue(obj any, keyField string) (string, error) {
 	v := reflect.ValueOf(obj)
 	if v.Kind() == reflect.Pointer {
