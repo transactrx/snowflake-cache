@@ -3,7 +3,7 @@
 ## Overview
 
 This service compares cache functionality between two database cache libraries:
-- **snowflake-cache** (`github.com/transactrx/snowflake-cache`) - Snowflake-backed cache
+- **snowflake-cache** (`github.com/transactrx/snowflake-cache`) - Snowflake-backed cache. Yes!
 - **db-cache** (`github.com/transactrx/db-cache`) - PostgreSQL-backed cache
 
 Both libraries cache the **same data** from their respective databases. This service periodically compares results from both caches and logs any discrepancies to aid in the migration from PostgreSQL to Snowflake.
