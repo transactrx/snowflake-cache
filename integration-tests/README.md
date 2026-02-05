@@ -112,7 +112,7 @@ SKIP_SNOWFLAKE_TESTS=true ./run_all_tests.sh
 
 **Test Control:**
 - `SKIP_SNOWFLAKE_TESTS`: Set to `true` to skip Snowflake tests
-- `DB_CACHE_SF_REGISTER_STREAMS`: Set to `true` to enable automatic stream registration
+- `DB_CACHE_SF_REGISTER_STREAMS`: Automatic stream registration is enabled by default. Set to `false` to disable
 
 ## Troubleshooting
 

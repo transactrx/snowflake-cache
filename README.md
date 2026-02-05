@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS MY_DATABASE.DB_CACHE.CACHE_LOG (
 Cache invalidation is handled automatically via Snowflake Streams + Task. The library handles most of this for you:
 
 **What the library does automatically:**
-- When you set `export DB_CACHE_SF_REGISTER_STREAMS=true`, the library automatically creates Streams for your monitored tables on first cache creation
+- The library automatically creates Streams for your monitored tables on first cache creation (enabled by default)
+- To disable automatic stream registration, set `export DB_CACHE_SF_REGISTER_STREAMS=false`
 
 **What you need to set up once (infrastructure):**
 > **Note**: The RAS DATA Science Team has already set this up for our users. You only need to set this up if you're using this library outside of the RAS environment.
