@@ -150,6 +150,9 @@ jobs:
           export TF_VAR_desired_count=1
           export TF_VAR_cpu_units=256
 
+          # Snowflake environment (required for stream registration)
+          export TF_VAR_snowflake_env='DEV'
+
           # Snowflake connection (hardcoded for example service)
           export TF_VAR_snowflake_account='dwwwkin-east'
           export TF_VAR_snowflake_database='CPE_DEV'
@@ -205,6 +208,9 @@ jobs:
           export TF_VAR_memory_mb=512
           export TF_VAR_desired_count=1
           export TF_VAR_cpu_units=256
+
+          # Snowflake environment (required for stream registration)
+          export TF_VAR_snowflake_env='DEV'
 
           # Snowflake connection (hardcoded for example service)
           export TF_VAR_snowflake_account='dwwwkin-east'

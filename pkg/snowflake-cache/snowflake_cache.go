@@ -22,6 +22,43 @@ import (
 // log schema explicitly.
 const DefaultLogSchema = "DB_CACHE"
 
+// Environment represents the deployment environment (DEV or PROD).
+// Set via the SNOWFLAKE_ENV environment variable.
+type Environment string
+
+const (
+	EnvDev  Environment = "DEV"
+	EnvProd Environment = "PROD"
+)
+
+// databaseForEnv maps environment to the Snowflake database name.
+func databaseForEnv(env Environment) string {
+	switch env {
+	case EnvProd:
+		return "CPE_PROD"
+	case EnvDev:
+		return "CPE_DEV"
+	default:
+		return "CPE_DEV" // Default to DEV for safety
+	}
+}
+
+// getEnvironment reads the SNOWFLAKE_ENV environment variable.
+// Valid values are "DEV" or "PROD". Returns an error if not set or invalid.
+func getEnvironment() (Environment, error) {
+	env := strings.ToUpper(os.Getenv("SNOWFLAKE_ENV"))
+	switch env {
+	case "PROD":
+		return EnvProd, nil
+	case "DEV":
+		return EnvDev, nil
+	case "":
+		return "", fmt.Errorf("SNOWFLAKE_ENV environment variable is required (set to DEV or PROD)")
+	default:
+		return "", fmt.Errorf("SNOWFLAKE_ENV must be DEV or PROD, got: %s", env)
+	}
+}
+
 // DbCache is the public interface that defines the contract for cache operations.
 // This interface is implemented by the Snowflake cache implementation.
 type DbCache[T any] interface {
@@ -32,9 +69,10 @@ type DbCache[T any] interface {
 
 // SnowflakeTable identifies a table in Snowflake by schema and name.
 // It is used to list which tables should invalidate the cache when they change.
+// The database is determined automatically from the SNOWFLAKE_ENV environment variable.
 type SnowflakeTable struct {
-	Schema string
-	Table  string
+	Schema string // Schema name (e.g., "DATA")
+	Table  string // Table name (e.g., "RULE_DATA_PLAN")
 }
 
 // dbCache implements an in-memory cache backed by a Snowflake data source
@@ -304,7 +342,7 @@ func CreateSnowflakeCache[T any](
 	if len(monitoredTables) == 0 {
 		return nil, fmt.Errorf("monitoredTables must contain at least one table")
 	}
-	// Normalize monitored tables using provided defaultSchema
+	// Normalize monitored tables into schema/table pairs
 	qualified := make([]SnowflakeTable, 0, len(monitoredTables))
 	for _, name := range monitoredTables {
 		parts := strings.Split(name, ".")
@@ -348,7 +386,7 @@ func CreateCacheWithDatabase[T any](
 	if len(monitoredTables) == 0 {
 		return nil, fmt.Errorf("monitoredTables must contain at least one table")
 	}
-	// Normalize into schema/table pairs
+	// Normalize monitored tables into schema/table pairs
 	qualified := make([]SnowflakeTable, 0, len(monitoredTables))
 	for _, name := range monitoredTables {
 		parts := strings.Split(name, ".")
@@ -398,13 +436,22 @@ func generateStaleCheckSQL(monitoredTables []string) string {
 // registerStreamsForTables calls the Snowflake REGISTERCACHETABLE procedure
 // for each monitored table, to create per-table Streams used by the heartbeat.
 // Procedure signature: REGISTERCACHETABLE(DB_NAME, SCHEMA_NAME, TABLE_NAME)
-// Failures are logged and ignored so the cache can still function.
-func registerStreamsForTables(db *sql.DB, logger *log.Logger, logDatabase, logSchema string, tables []SnowflakeTable) {
+// The database name is determined by the SNOWFLAKE_ENV environment variable (DEV or PROD).
+// Returns an error if SNOWFLAKE_ENV is not set or invalid.
+func registerStreamsForTables(db *sql.DB, logger *log.Logger, logDatabase, logSchema string, tables []SnowflakeTable) error {
 	if logSchema == "" {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Get database from environment (CPE_DEV or CPE_PROD)
+	env, err := getEnvironment()
+	if err != nil {
+		return fmt.Errorf("stream registration failed: %w", err)
+	}
+	database := databaseForEnv(env)
+	logger.Printf("using database %s for stream registration (SNOWFLAKE_ENV=%s)", database, env)
 
 	var procFQN string
 	if logDatabase != "" {
@@ -416,18 +463,18 @@ func registerStreamsForTables(db *sql.DB, logger *log.Logger, logDatabase, logSc
 	for _, t := range tables {
 		schema := strings.ToUpper(t.Schema)
 		table := strings.ToUpper(t.Table)
-		database := strings.ToUpper(logDatabase)
-		if database == "" {
-			// If no database specified, try to infer from schema or use empty
-			database = ""
-		}
 		call := fmt.Sprintf("CALL %s(?, ?, ?)", procFQN)
-		if _, err := db.ExecContext(ctx, call, database, schema, table); err != nil {
+		row := db.QueryRowContext(ctx, call, database, schema, table)
+		var result string
+		if err := row.Scan(&result); err != nil {
 			logger.Printf("warning: could not register stream for %s.%s.%s via %s: %v (continuing without auto-refresh)", database, schema, table, procFQN, err)
+		} else if strings.Contains(result, "Failed") {
+			logger.Printf("warning: stream registration failed for %s.%s.%s: %s (continuing without auto-refresh)", database, schema, table, result)
 		} else {
 			logger.Printf("registered stream for %s.%s.%s via %s", database, schema, table, procFQN)
 		}
 	}
+	return nil
 }
 
 // CreateSnowflakeCacheQualified constructs a Snowflake-backed cache when you already
@@ -496,8 +543,11 @@ func CreateSnowflakeCacheQualified[T any](
 
 	// Best-effort provisioning of Streams via REGISTERCACHETABLE (enabled by default).
 	// Disable by setting DB_CACHE_SF_REGISTER_STREAMS=false in the environment.
+	// Requires SNOWFLAKE_ENV to be set to DEV or PROD.
 	if sfDB, ok := db.(*sql.DB); ok && !strings.EqualFold(os.Getenv("DB_CACHE_SF_REGISTER_STREAMS"), "false") {
-		registerStreamsForTables(sfDB, cache.logger, cache.logDatabase, cache.logSchema, monitoredTables)
+		if err := registerStreamsForTables(sfDB, cache.logger, cache.logDatabase, cache.logSchema, monitoredTables); err != nil {
+			return nil, err
+		}
 	}
 
 	// Initial load
