@@ -494,9 +494,9 @@ func CreateSnowflakeCacheQualified[T any](
 	cache.logSchema = strings.ToUpper(logSchema)
 	cache.logDatabase = strings.ToUpper(logDatabase)
 
-	// Best-effort provisioning of Streams via REGISTER_TABLE (opt-in via env).
-	// Enable by setting DB_CACHE_SF_REGISTER_STREAMS=true in the environment.
-	if sfDB, ok := db.(*sql.DB); ok && strings.EqualFold(os.Getenv("DB_CACHE_SF_REGISTER_STREAMS"), "true") {
+	// Best-effort provisioning of Streams via REGISTERCACHETABLE (enabled by default).
+	// Disable by setting DB_CACHE_SF_REGISTER_STREAMS=false in the environment.
+	if sfDB, ok := db.(*sql.DB); ok && !strings.EqualFold(os.Getenv("DB_CACHE_SF_REGISTER_STREAMS"), "false") {
 		registerStreamsForTables(sfDB, cache.logger, cache.logDatabase, cache.logSchema, monitoredTables)
 	}
 

@@ -124,7 +124,7 @@ go run main.go
    );
    ```
 
-3. **Set up automatic cache invalidation** - The library automatically creates Streams when `DB_CACHE_SF_REGISTER_STREAMS=true` is set. You need to create the HEARTBEAT procedure and Task (see main README for complete setup)
+3. **Set up automatic cache invalidation** - The library automatically creates Streams by default. To disable, set `DB_CACHE_SF_REGISTER_STREAMS=false`. You need to create the HEARTBEAT procedure and Task (see main README for complete setup)
 
 ## See Also
 

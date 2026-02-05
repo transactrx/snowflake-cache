@@ -57,7 +57,7 @@ SNOWFLAKE_PRIVATE_KEY="LS0tLS1CRUdJTi..."  # Base64 encoded or PEM format
 
 The `setupSnowflakeSchemaAndData()` function in `integration_test.go` automatically creates:
 
-> **Note:** If you want to test automatic stream registration, you need to create the `REGISTERCACHETABLE` stored procedure in your `DB_CACHE` schema and set `DB_CACHE_SF_REGISTER_STREAMS=true`. Otherwise, tests will manually update `CACHE_LOG` for testing purposes only (not recommended for production).
+> **Note:** Automatic stream registration is enabled by default. Ensure the `REGISTERCACHETABLE` stored procedure exists in your `DB_CACHE` schema. To disable automatic registration, set `DB_CACHE_SF_REGISTER_STREAMS=false`.
 
 1. **CACHE_LOG** - For tracking table changes (cache invalidation)
    ```sql
@@ -104,7 +104,8 @@ Use the existing test runner. It will run all Snowflake integration tests and, w
 
 ```bash
 cd integration-tests/snowflake
-export DB_CACHE_SF_REGISTER_STREAMS=true   # Opt-in: Go code will call REGISTERCACHETABLE
+# Stream registration is enabled by default - no env var needed
+# To disable: export DB_CACHE_SF_REGISTER_STREAMS=false
 ./run_tests.sh
 ```
 
@@ -175,9 +176,9 @@ The integration tests cover:
 
 **The library can automatically register Snowflake Streams** when you create a cache! 🎉
 
-### Automatic Stream Registration (Opt-in)
+### Automatic Stream Registration (Enabled by Default)
 
-When you enable stream registration by setting `DB_CACHE_SF_REGISTER_STREAMS=true`, the library will:
+The library automatically registers Snowflake Streams by default. It will:
 
 1. **Call REGISTERCACHETABLE** procedure for each monitored table
 2. **The procedure creates a STREAM** for the table (tracks INSERT/UPDATE/DELETE)
@@ -186,12 +187,12 @@ When you enable stream registration by setting `DB_CACHE_SF_REGISTER_STREAMS=tru
 
 This provides **automatic cache invalidation** for Snowflake!
 
-> **Prerequisites:** You must create the `REGISTERCACHETABLE` stored procedure in your cache schema (e.g., `DB_CACHE`) before enabling this feature.
+> **Prerequisites:** You must create the `REGISTERCACHETABLE` stored procedure in your cache schema (e.g., `DB_CACHE`).
 
 ### Example (Go performs registration)
 ```bash
-# Enable automatic stream registration
-export DB_CACHE_SF_REGISTER_STREAMS=true
+# Stream registration is enabled by default - no env var needed
+# To disable: export DB_CACHE_SF_REGISTER_STREAMS=false
 ```
 
 ```go
