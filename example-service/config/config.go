@@ -9,6 +9,9 @@ import (
 
 // Config holds all configuration for the cache comparison service.
 type Config struct {
+	// Snowflake environment (DEV or PROD) - determines database for stream registration
+	SnowflakeEnv string
+
 	// Snowflake connection parameters
 	SnowflakeAccount    string
 	SnowflakeUser       string
@@ -57,6 +60,15 @@ func DefaultConfig() *Config {
 // Returns an error if required variables are missing.
 func LoadFromEnv() (*Config, error) {
 	cfg := DefaultConfig()
+
+	// Required: Snowflake environment (DEV or PROD)
+	cfg.SnowflakeEnv = os.Getenv("SNOWFLAKE_ENV")
+	if cfg.SnowflakeEnv == "" {
+		return nil, fmt.Errorf("SNOWFLAKE_ENV environment variable is required (set to DEV or PROD)")
+	}
+	if cfg.SnowflakeEnv != "DEV" && cfg.SnowflakeEnv != "PROD" {
+		return nil, fmt.Errorf("SNOWFLAKE_ENV must be DEV or PROD, got: %s", cfg.SnowflakeEnv)
+	}
 
 	// Required: Snowflake connection parameters
 	cfg.SnowflakeAccount = os.Getenv("SNOWFLAKE_ACCOUNT")

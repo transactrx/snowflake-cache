@@ -103,8 +103,8 @@ err := cache.ForceRefresh()
 ## Running the Example
 
 ```bash
-# Set environment variable
-export DB_BACKEND=snowflake
+# Set required environment variables
+export SNOWFLAKE_ENV=DEV   # Required: DEV or PROD
 
 # Run example
 go run main.go

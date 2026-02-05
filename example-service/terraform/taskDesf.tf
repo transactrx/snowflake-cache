@@ -8,6 +8,14 @@ variable "cpu_units" {
 }
 
 //=[DATABASE CONFIGURATION]================================================================================
+variable "snowflake_env" {
+  type        = string
+  description = "Snowflake environment: DEV or PROD (determines database for stream registration)"
+  validation {
+    condition     = contains(["DEV", "PROD"], var.snowflake_env)
+    error_message = "snowflake_env must be DEV or PROD"
+  }
+}
 variable "snowflake_account" {
   type        = string
   description = "Snowflake account identifier (e.g., dwwwkin-east)"
@@ -85,6 +93,8 @@ module "main-Container" {
   memory        = var.memory_mb - 1
   logGroup      = aws_cloudwatch_log_group.logGroup.name
   envVariables = [
+    # Snowflake environment (required for stream registration)
+    { name = "SNOWFLAKE_ENV", value = var.snowflake_env },
     # Snowflake connection parameters (non-secret) - warehouse/role use user defaults
     { name = "SNOWFLAKE_ACCOUNT", value = var.snowflake_account },
     { name = "SNOWFLAKE_DATABASE", value = var.snowflake_database },

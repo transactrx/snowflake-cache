@@ -21,6 +21,11 @@ import (
 	snowflakecache "github.com/transactrx/snowflake-cache/pkg/snowflake-cache"
 )
 
+func init() {
+	// Set required environment variable for tests
+	os.Setenv("SNOWFLAKE_ENV", "DEV")
+}
+
 // Test models that match our Snowflake database schema
 // Note: Field names must match the database column names for the cache to work
 type APIKey struct {

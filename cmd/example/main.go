@@ -60,16 +60,15 @@ func snowflakeExample() {
 }
 
 func main() {
-	// Check environment variable to determine which example to run
-	backend := os.Getenv("DB_BACKEND")
-
-	switch backend {
-	case "snowflake":
-		log.Println("Running Snowflake example...")
-		snowflakeExample()
-	default:
-		log.Println("Usage: Set DB_BACKEND environment variable to 'snowflake'")
-		log.Println("Example: DB_BACKEND=snowflake go run main.go")
-		log.Println("\nThis package is Snowflake-only and uses snowflakecache.CreateCache API!")
+	// Check required environment variable
+	env := os.Getenv("SNOWFLAKE_ENV")
+	if env == "" {
+		log.Fatal("SNOWFLAKE_ENV environment variable is required (set to DEV or PROD)")
 	}
+	if env != "DEV" && env != "PROD" {
+		log.Fatalf("SNOWFLAKE_ENV must be DEV or PROD, got: %s", env)
+	}
+
+	log.Printf("Running Snowflake example (SNOWFLAKE_ENV=%s)...", env)
+	snowflakeExample()
 }

@@ -1,12 +1,18 @@
 package snowflakecache
 
 import (
+	"os"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func init() {
+	// Set required environment variable for tests
+	os.Setenv("SNOWFLAKE_ENV", "DEV")
+}
 
 type testItem struct {
 	UserID *string `db:"user_id"`

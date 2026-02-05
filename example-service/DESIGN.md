@@ -110,9 +110,15 @@ type ApiKey struct {
 
 ### 1. Configuration (`config.go`)
 Environment variables needed:
-- `SNOWFLAKE_DSN` - Snowflake connection string
+- `SNOWFLAKE_ENV` - **Required**: `DEV` or `PROD` (determines database for stream registration: CPE_DEV or CPE_PROD)
+- `SNOWFLAKE_ACCOUNT` - Snowflake account identifier
+- `SNOWFLAKE_USER` - Snowflake username
+- `SNOWFLAKE_PRIVATE_KEY` - Base64-encoded or PEM private key
+- `SNOWFLAKE_DATABASE` - Snowflake database name
+- `SNOWFLAKE_SCHEMA` - Snowflake schema name
 - `POSTGRES_DSN` - PostgreSQL connection string
-- `SNOWFLAKE_DATABASE_SCHEMA` - e.g., "MY_DATABASE.MY_SCHEMA"
+- `SNOWFLAKE_SQL` - SQL query for Snowflake cache
+- `POSTGRES_SQL` - SQL query for PostgreSQL cache
 - `COMPARISON_INTERVAL` - Interval between comparisons, parsed as a `time.Duration`
   string (for example: `"5m"`, `"30s"`, `"1h"`). If unset, default to `"5m"`.
 - `LOG_LEVEL` - Logging verbosity (one of: `debug`, `info`, `warn`, `error`).
