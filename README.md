@@ -77,6 +77,10 @@ Cache invalidation is handled automatically via Snowflake Streams + Task. The li
 
 **What the library does automatically:**
 - The library automatically creates Streams for your monitored tables on first cache creation (enabled by default)
+- The database for monitored tables is determined by the `SNOWFLAKE_ENV` environment variable **(required)**:
+  - `SNOWFLAKE_ENV=DEV` → uses `CPE_DEV` database
+  - `SNOWFLAKE_ENV=PROD` → uses `CPE_PROD` database
+  - **Error if not set** - you must explicitly set the environment
 - To disable automatic stream registration, set `export DB_CACHE_SF_REGISTER_STREAMS=false`
 
 **What you need to set up once (infrastructure):**
@@ -134,6 +138,13 @@ See `cmd/example/` for complete examples.
 ## Integration Tests
 
 See `integration-tests/snowflake/` for integration tests and detailed setup instructions.
+
+## Environment Variables
+
+| Variable | Values | Default | Description |
+|----------|--------|---------|-------------|
+| `SNOWFLAKE_ENV` | `DEV`, `PROD` | **Required** | Determines the Snowflake database for monitored tables (`CPE_DEV` or `CPE_PROD`). Error if not set. |
+| `DB_CACHE_SF_REGISTER_STREAMS` | `true`, `false` | `true` | Enable/disable automatic stream registration |
 
 ## License
 
