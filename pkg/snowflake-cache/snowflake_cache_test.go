@@ -1,18 +1,12 @@
 package snowflakecache
 
 import (
-	"os"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
-
-func init() {
-	// Set required environment variable for tests
-	os.Setenv("SNOWFLAKE_ENV", "DEV")
-}
 
 type testItem struct {
 	UserID *string `db:"user_id"`
@@ -27,13 +21,26 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Fingerprint query expectation: CACHE_LOG lives in the canonical
-	// DefaultLogSchema (DB_CACHE) schema, while TABLE_NAME stores the fully
-	// qualified identifier in format "DATABASE.SCHEMA.TABLE" (when database is known)
-	// or "SCHEMA.TABLE" (when database is not provided).
-	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM DB_CACHE.CACHE_LOG WHERE table_name = ?"
+	// Required schema/procedure checks
+	schemaQuery := "SELECT COUNT(*) FROM MY_DB.INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
+	mock.ExpectQuery(regexp.QuoteMeta(schemaQuery)).
+		WithArgs("DB_CACHE").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	procQuery := "SELECT COUNT(*) FROM MY_DB.INFORMATION_SCHEMA.PROCEDURES WHERE PROCEDURE_SCHEMA = ? AND PROCEDURE_NAME = ?"
+	mock.ExpectQuery(regexp.QuoteMeta(procQuery)).
+		WithArgs("DB_CACHE", "REGISTERCACHETABLE").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	// Stream registration call
+	registerCall := "CALL MY_DB.DB_CACHE.REGISTERCACHETABLE(?, ?, ?)"
+	mock.ExpectQuery(regexp.QuoteMeta(registerCall)).
+		WithArgs("MY_DB", "PUBLIC", "API_KEYS").
+		WillReturnRows(sqlmock.NewRows([]string{"result"}).AddRow("OK"))
+
+	// Fingerprint query expectation: CACHE_LOG lives in MY_DB.DB_CACHE schema, and TABLE_NAME is DB.SCHEMA.TABLE.
+	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM MY_DB.DB_CACHE.CACHE_LOG WHERE table_name = ?"
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-		WithArgs("DB_CACHE.API_KEYS").
+		WithArgs("MY_DB.PUBLIC.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))
 
 	// Load SQL expectation
@@ -52,7 +59,7 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 		"UserID",
 		time.Hour,
 		db,
-		"PUBLIC",
+		"MY_DB.PUBLIC",
 	)
 	if err != nil {
 		t.Fatalf("CreateSnowflakeCache failed: %v", err)
@@ -81,12 +88,26 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Initial fingerprint: use the canonical DefaultLogSchema (DB_CACHE)
-	// for CACHE_LOG. TABLE_NAME format is "DATABASE.SCHEMA.TABLE" (with database)
-	// or "SCHEMA.TABLE" (without database).
-	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM DB_CACHE.CACHE_LOG WHERE table_name = ?"
+	// Required schema/procedure checks
+	schemaQuery := "SELECT COUNT(*) FROM MY_DB.INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
+	mock.ExpectQuery(regexp.QuoteMeta(schemaQuery)).
+		WithArgs("DB_CACHE").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	procQuery := "SELECT COUNT(*) FROM MY_DB.INFORMATION_SCHEMA.PROCEDURES WHERE PROCEDURE_SCHEMA = ? AND PROCEDURE_NAME = ?"
+	mock.ExpectQuery(regexp.QuoteMeta(procQuery)).
+		WithArgs("DB_CACHE", "REGISTERCACHETABLE").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	// Stream registration call
+	registerCall := "CALL MY_DB.DB_CACHE.REGISTERCACHETABLE(?, ?, ?)"
+	mock.ExpectQuery(regexp.QuoteMeta(registerCall)).
+		WithArgs("MY_DB", "PUBLIC", "API_KEYS").
+		WillReturnRows(sqlmock.NewRows([]string{"result"}).AddRow("OK"))
+
+	// Initial fingerprint uses MY_DB.DB_CACHE and DB.SCHEMA.TABLE.
+	fpQuery := "SELECT COUNT(*) || TO_VARCHAR(COALESCE(MAX(update_time), TO_TIMESTAMP_TZ('1980-01-01'))) AS ct FROM MY_DB.DB_CACHE.CACHE_LOG WHERE table_name = ?"
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-		WithArgs("DB_CACHE.API_KEYS").
+		WithArgs("MY_DB.PUBLIC.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp1"))
 
 	// Initial load
@@ -94,7 +115,7 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(loadSQL)).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "id"}).AddRow("u1", 1))
 
-	cache, err := CreateCache[testItem](nil, loadSQL, []string{"PUBLIC.API_KEYS"}, "UserID", time.Hour, db, "PUBLIC")
+	cache, err := CreateCache[testItem](nil, loadSQL, []string{"PUBLIC.API_KEYS"}, "UserID", time.Hour, db, "MY_DB.PUBLIC")
 	if err != nil {
 		t.Fatalf("CreateSnowflakeCache failed: %v", err)
 	}
@@ -102,7 +123,7 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 
 	// ForceRefresh should re-read fingerprint and reload
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
-		WithArgs("DB_CACHE.API_KEYS").
+		WithArgs("MY_DB.PUBLIC.API_KEYS").
 		WillReturnRows(sqlmock.NewRows([]string{"ct"}).AddRow("fp2"))
 
 	// Reload expectation

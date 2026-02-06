@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"log"
-	"os"
 	"time"
 
 	snowflakecache "github.com/transactrx/snowflake-cache/pkg/snowflake-cache"
@@ -23,9 +22,9 @@ func snowflakeExample() {
 	}
 	defer snowflakeDB.Close()
 
-	// For Snowflake: pass "SCHEMA" as the DB_RW parameter
-	// This specifies the default schema for your monitored application tables
-	// Note: CACHE_LOG always lives in the hardcoded DB_CACHE schema
+	// For Snowflake: pass "DATABASE.SCHEMA" as the DB_RW parameter
+	// This specifies the default database + schema for your monitored application tables.
+	// Note: CACHE_LOG lives in the DB_CACHE schema in the same database.
 	cache, err := snowflakecache.CreateCache[ApiKey2](
 		nil, // logger (nil uses default)
 		`SELECT 
@@ -41,7 +40,7 @@ func snowflakeExample() {
 		"Key",                   // key field name
 		time.Second*60,          // check interval
 		snowflakeDB,             // Snowflake *sql.DB connection
-		"MY_SCHEMA",             // Default schema for monitored tables
+		"MY_DATABASE.MY_SCHEMA", // Default database + schema for monitored tables
 	)
 	if err != nil {
 		panic(err)
@@ -60,15 +59,5 @@ func snowflakeExample() {
 }
 
 func main() {
-	// Check required environment variable
-	env := os.Getenv("SNOWFLAKE_ENV")
-	if env == "" {
-		log.Fatal("SNOWFLAKE_ENV environment variable is required (set to DEV or PROD)")
-	}
-	if env != "DEV" && env != "PROD" {
-		log.Fatalf("SNOWFLAKE_ENV must be DEV or PROD, got: %s", env)
-	}
-
-	log.Printf("Running Snowflake example (SNOWFLAKE_ENV=%s)...", env)
 	snowflakeExample()
 }
