@@ -46,7 +46,7 @@ func main() {
         "UserID",        // key field on struct
         5*time.Second,    // poll interval
         db,              // *sql.DB (gosnowflake)
-        "MY_SCHEMA",     // Default schema for monitored tables
+        "MY_DATABASE.MY_SCHEMA",     // Default database + schema for monitored tables
     )
     if err != nil { log.Fatal(err) }
 
@@ -61,7 +61,7 @@ func main() {
 
 ### 1. Create CACHE_LOG
 
-Create a `CACHE_LOG` table in your Snowflake schema to track table changes:
+Create a `CACHE_LOG` table in your Snowflake schema (in the same database as your monitored tables) to track table changes:
 
 ```sql
 CREATE TABLE IF NOT EXISTS MY_DATABASE.DB_CACHE.CACHE_LOG (
@@ -77,10 +77,8 @@ Cache invalidation is handled automatically via Snowflake Streams + Task. The li
 
 **What the library does automatically:**
 - The library automatically creates Streams for your monitored tables on first cache creation (enabled by default)
-- The database for monitored tables is determined by the `SNOWFLAKE_ENV` environment variable **(required)**:
-  - `SNOWFLAKE_ENV=DEV` → uses `CPE_DEV` database
-  - `SNOWFLAKE_ENV=PROD` → uses `CPE_PROD` database
-  - **Error if not set** - you must explicitly set the environment
+- The database used for CACHE_LOG and REGISTERCACHETABLE is the same database as your monitored tables
+- The library validates that the `DB_CACHE` schema and `REGISTERCACHETABLE` procedure exist before creating the cache
 - To disable automatic stream registration, set `export DB_CACHE_SF_REGISTER_STREAMS=false`
 
 **What you need to set up once (infrastructure):**
@@ -118,7 +116,7 @@ func CreateCache[T any](
 - `keyField`: Struct field name used as cache key (must be string, *string, or numeric types)
 - `cacheCheckInterval`: How often to poll CACHE_LOG for changes
 - `DB`: Snowflake *sql.DB connection
-- `DB_RW`: String in "SCHEMA" format (specifies default schema for monitored tables; CACHE_LOG always uses hardcoded DB_CACHE schema)
+- `DB_RW`: String in "SCHEMA" or "DATABASE.SCHEMA" format (specifies default database+schema for monitored tables; CACHE_LOG uses the DB_CACHE schema in the same database)
 - `SQLParams`: Optional query parameters
 
 ### DbCache Interface
@@ -143,7 +141,6 @@ See `integration-tests/snowflake/` for integration tests and detailed setup inst
 
 | Variable | Values | Default | Description |
 |----------|--------|---------|-------------|
-| `SNOWFLAKE_ENV` | `DEV`, `PROD` | **Required** | Determines the Snowflake database for monitored tables (`CPE_DEV` or `CPE_PROD`). Error if not set. |
 | `DB_CACHE_SF_REGISTER_STREAMS` | `true`, `false` | `true` | Enable/disable automatic stream registration |
 
 ## License

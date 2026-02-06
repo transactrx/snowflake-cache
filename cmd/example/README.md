@@ -76,9 +76,9 @@ func main() {
 - **Snowflake**: Pass `*sql.DB` as the DB parameter (created with `sql.Open("snowflake", dsn)`)
 
 ### DB_RW Parameter
-- **Snowflake**: Pass a string in `"SCHEMA"` format to specify the default schema for your **monitored application tables**
-- Example: `"MY_SCHEMA"` - uses `MY_SCHEMA` as the default schema for unqualified table names in `monitoredTables`
-- **Note**: CACHE_LOG always lives in the hardcoded `DB_CACHE` schema, not the schema you specify here
+- **Snowflake**: Pass a string in `"DATABASE.SCHEMA"` format to specify the default database and schema for your **monitored application tables**
+- Example: `"MY_DATABASE.MY_SCHEMA"` - uses `MY_DATABASE.MY_SCHEMA` as the default for unqualified table names in `monitoredTables`
+- **Note**: CACHE_LOG lives in the `DB_CACHE` schema in the same database
 
 ### SQL Naming
 - **Snowflake**: Uses uppercase names by default, with quoted aliases for struct mapping
@@ -103,9 +103,6 @@ err := cache.ForceRefresh()
 ## Running the Example
 
 ```bash
-# Set required environment variables
-export SNOWFLAKE_ENV=DEV   # Required: DEV or PROD
-
 # Run example
 go run main.go
 ```
