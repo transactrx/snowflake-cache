@@ -10,6 +10,7 @@ A lightweight, in-memory cache library for Snowflake databases that automaticall
 - ✅ **Thread-safe** concurrent access
 - ✅ **Background polling** for automatic refresh
 - ✅ **Stream registration support** for Snowflake Streams + Tasks
+- ✅ **Fail-closed hook** (`OnRefreshError`) to halt on persistent refresh failure
 
 ## Quick Start
 
@@ -126,8 +127,30 @@ type DbCache[T any] interface {
     Get(key string) []T           // Get cached items by key
     GetAll() []T                   // Get all cached items
     ForceRefresh() error          // Force immediate cache refresh
+    OnRefreshError(handler func(err error, consecutiveFailures int)) // Observe background-refresh failures
 }
 ```
+
+### OnRefreshError (fail-closed refresh)
+
+By default a failed *background* refresh is logged and the cache keeps serving the last
+successfully loaded data (fail-static). For load-bearing caches — where serving silently stale
+data is worse than a restart — register a handler to observe refresh failures and act on
+persistent ones:
+
+```go
+cache.OnRefreshError(func(err error, consecutiveFailures int) {
+    if consecutiveFailures >= 3 { // ~3 polling intervals of sustained failure
+        log.Fatalf("cache refresh failing persistently, halting: %v", err)
+    }
+})
+```
+
+- `consecutiveFailures` is the running count of consecutive background-refresh failures; it
+  resets to 0 on the next successful refresh.
+- The handler is invoked from the background poller only — **not** for the initial synchronous
+  load (constructor errors are returned to the caller instead).
+- Register it immediately after `CreateCache`. A nil handler disables the callback.
 
 ## Examples
 

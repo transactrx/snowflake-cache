@@ -1,6 +1,9 @@
 package snowflakecache
 
 import (
+	"errors"
+	"io"
+	"log"
 	"regexp"
 	"testing"
 	"time"
@@ -136,5 +139,67 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// newBareCache returns a dbCache with just enough wiring to exercise the
+// background-refresh bookkeeping (noteRefreshResult / OnRefreshError) without a DB.
+func newBareCache() *dbCache[testItem] {
+	return &dbCache[testItem]{
+		logger:   log.New(io.Discard, "", 0),
+		keyCache: make(map[string][]testItem),
+	}
+}
+
+func TestSnowflakeCache_OnRefreshError(t *testing.T) {
+	c := newBareCache()
+
+	type call struct {
+		err   error
+		count int
+	}
+	var calls []call
+	c.OnRefreshError(func(err error, consecutiveFailures int) {
+		calls = append(calls, call{err: err, count: consecutiveFailures})
+	})
+
+	errBoom := errors.New("boom")
+
+	// Two consecutive failures increment the running counter.
+	c.noteRefreshResult(errBoom)
+	c.noteRefreshResult(errBoom)
+	if len(calls) != 2 {
+		t.Fatalf("expected handler invoked twice, got %d", len(calls))
+	}
+	if calls[0].count != 1 || calls[1].count != 2 {
+		t.Fatalf("expected consecutive counts 1,2; got %d,%d", calls[0].count, calls[1].count)
+	}
+	if !errors.Is(calls[1].err, errBoom) {
+		t.Fatalf("expected the refresh error propagated to the handler, got %v", calls[1].err)
+	}
+
+	// A successful refresh resets the counter and must not invoke the handler.
+	c.noteRefreshResult(nil)
+	if len(calls) != 2 {
+		t.Fatalf("a successful refresh must not invoke the handler; calls=%d", len(calls))
+	}
+
+	// The next failure starts counting again from 1 (reset took effect).
+	c.noteRefreshResult(errBoom)
+	if len(calls) != 3 || calls[2].count != 1 {
+		t.Fatalf("expected the counter to reset to 1 after success; calls=%d lastCount=%d", len(calls), calls[len(calls)-1].count)
+	}
+}
+
+func TestSnowflakeCache_NoteRefreshResult_NilHandlerSafe(t *testing.T) {
+	c := newBareCache()
+
+	// No handler registered: noteRefreshResult must not panic and must still track.
+	c.noteRefreshResult(errors.New("boom"))
+
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	if c.consecutiveRefreshFailures != 1 {
+		t.Fatalf("expected consecutiveRefreshFailures=1 with a nil handler, got %d", c.consecutiveRefreshFailures)
 	}
 }

@@ -136,6 +136,12 @@ type DbCache[T any] interface {
 	Get(string) []T
 	GetAll() []T
 	ForceRefresh() error
+	// OnRefreshError registers a handler invoked after each failed background
+	// refresh, with the running count of consecutive failures (reset to 0 on the
+	// next successful refresh). Register it immediately after construction; the
+	// handler is not invoked for the initial synchronous load. A nil handler
+	// disables the callback.
+	OnRefreshError(handler func(err error, consecutiveFailures int))
 }
 
 // SnowflakeTable identifies a table in Snowflake by schema and name.
@@ -164,6 +170,12 @@ type dbCache[T any] struct {
 	logger                *log.Logger
 	logSchema             string
 	logDatabase           string
+
+	// refreshErrHandler, if set via OnRefreshError, is invoked after each failed
+	// background refresh. consecutiveRefreshFailures tracks consecutive background
+	// refresh failures (reset to 0 on success). Both are guarded by mutex.
+	refreshErrHandler          func(err error, consecutiveFailures int)
+	consecutiveRefreshFailures int
 }
 
 // Get returns the cached slice associated with the given key, or nil if missing.
@@ -198,6 +210,15 @@ func (c *dbCache[T]) ForceRefresh() error {
 		return err
 	}
 	return c.loadCache(fp)
+}
+
+// OnRefreshError registers a handler invoked after each failed background refresh
+// (see the DbCache interface). The handler receives the running count of
+// consecutive failures so callers can decide when a refresh failure is persistent.
+func (c *dbCache[T]) OnRefreshError(handler func(err error, consecutiveFailures int)) {
+	c.mutex.Lock()
+	c.refreshErrHandler = handler
+	c.mutex.Unlock()
 }
 
 // getDbStaleCheckValue builds and executes the fingerprint query over DB_CACHE_LOG
@@ -300,6 +321,40 @@ func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
 	c.keyCache = newMap
 	c.staleCheckVal = staleCheckVal
 	return nil
+}
+
+// refreshOnce performs a single staleness check followed by a conditional reload.
+// It is the unit of work executed by the background poller on every tick.
+func (c *dbCache[T]) refreshOnce() error {
+	staleCheckVal, err := c.getDbStaleCheckValue()
+	if err != nil {
+		return err
+	}
+	return c.loadCache(staleCheckVal)
+}
+
+// noteRefreshResult records the outcome of a background refresh. A nil error resets
+// the consecutive-failure counter; a non-nil error increments it, logs, and invokes
+// the OnRefreshError handler (if any) with the running consecutive-failure count so
+// the caller can decide when a refresh failure has become persistent.
+func (c *dbCache[T]) noteRefreshResult(err error) {
+	if err == nil {
+		c.mutex.Lock()
+		c.consecutiveRefreshFailures = 0
+		c.mutex.Unlock()
+		return
+	}
+
+	c.mutex.Lock()
+	c.consecutiveRefreshFailures++
+	failures := c.consecutiveRefreshFailures
+	handler := c.refreshErrHandler
+	c.mutex.Unlock()
+
+	c.logger.Printf("error while refreshing cache (consecutive failures: %d): %v", failures, err)
+	if handler != nil {
+		handler(err, failures)
+	}
 }
 
 // CreateCache creates a Snowflake-backed cache using the unified interface signature.
@@ -638,18 +693,12 @@ func CreateSnowflakeCacheQualified[T any](
 		return nil, fmt.Errorf("failed to perform initial load: %w", err)
 	}
 
-	// Start background poller for automatic cache refresh
+	// Start background poller for automatic cache refresh. A persistent failure is
+	// surfaced through any handler registered via OnRefreshError; the cache keeps
+	// serving the last successfully loaded data until a refresh succeeds.
 	go func() {
-		for now := range time.Tick(checkInterval) {
-			staleCheckVal, err := cache.getDbStaleCheckValue()
-			if err != nil {
-				cache.logger.Printf("Error in cache monitor: %v", err)
-			} else {
-				cache.logger.Printf("time to reload cache: %s", now.String())
-				if err := cache.loadCache(staleCheckVal); err != nil {
-					cache.logger.Printf("error while reloading cache: %v", err)
-				}
-			}
+		for range time.Tick(checkInterval) {
+			cache.noteRefreshResult(cache.refreshOnce())
 		}
 	}()
 
