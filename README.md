@@ -173,17 +173,16 @@ See `integration-tests/snowflake/` for integration tests and detailed setup inst
 <!-- code-compliance-agent:start -->
 ## Code compliance
 
-_Last reviewed by CodeComplianceBatchAgent on 2026-06-29 23:12:06 UTC._
+_Last reviewed by CodeComplianceBatchAgent on 2026-07-10 18:16:44 UTC._
 
-**Reliability score: 82/100 (High)**
-- **Breaking risk:** Most jumps are minor/patch and stayed on the same major version. Notable larger jumps: aws-sdk-go-v2 service/s3 (1.53 → 1.104) and otel (1.37 → 1.44) are indirect-only here, so risk is limited to gosnowflake's internal usage; gosnowflake's own minor bump (1.17 → 1.19) is the highest-blast-radius change. pgx/v5 jumped 5.7 → 5.10 but is also only used transitively by gosnowflake in the root module (the example-service uses it directly via pgxpool.New, which has a stable API).
-- **Likely bugs:** Possible subtle behavior changes in Snowflake query handling from the gosnowflake minor bump (e.g. driver session params, error wrapping) that the unit tests' go-sqlmock layer would not catch. The example-service build path was only validated against a stub db-cache module; the real db-cache module may exercise pgx/v5 5.10 in ways not covered here.
-- **Reliability:** Unit tests in pkg/snowflake-cache pass and the build is clean for both modules. However, the integration test suite requires live Snowflake credentials and could not run in this environment, and example-service has no tests at all — so coverage of the upgraded behavior is thin. osv-scanner confirms zero remaining advisories.
+**Reliability score: 90/100 (High)**
+- **Breaking risk:** Change is limited to the Go toolchain directive (1.25.11 → 1.25.12), a patch-level bump. Point releases of Go maintain backward compatibility; the two included fixes are for os.Root symlink handling and TLS ECH client-hello encoding, neither of which is used by this cache library.
+- **Likely bugs:** Very unlikely. No application code, no direct or indirect dependency versions, and no lockfile hashes changed — only two lines in go.mod files.
+- **Reliability:** High. Unit tests in pkg/snowflake-cache pass under the new toolchain. Integration tests require live Snowflake credentials and could not be exercised here; example-service cannot be built here because its replace directive points at a sibling ../../db-cache repo absent from this checkout (pre-existing).
 
 **Recommendations**
 
-- Run integration-tests/snowflake against a real Snowflake test account before merging to confirm gosnowflake 1.19 behavior is unchanged for this codebase.
-- Smoke-test example-service against the real db-cache module (this sandbox used a stub) to validate pgx/v5 5.10 + pgxpool behavior end-to-end.
-- Add a CI job that runs `osv-scanner` and `go test ./...` on each PR so future dep drift is caught automatically.
-- Consider adding a few unit tests around CacheManager / comparator in example-service so a future major bump is caught by tests instead of in prod.
+- Run the integration test suite (make test-integration) in an environment where SNOWFLAKE_PRIVATE_KEY / SNOWFLAKE_PRIVATE_KEY_PATH is provisioned to confirm end-to-end connectivity with Go 1.25.12.
+- Provision the sibling github.com/transactrx/db-cache repo in CI so example-service can be built and vulnerability-scanned as part of PR checks.
+- Consider dropping the openpgp advisory noise by ensuring no transitive dep pulls in x/crypto/openpgp (currently confirmed unused via grep).
 <!-- code-compliance-agent:end -->
