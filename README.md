@@ -173,16 +173,16 @@ See `integration-tests/snowflake/` for integration tests and detailed setup inst
 <!-- code-compliance-agent:start -->
 ## Code compliance
 
-_Last reviewed by CodeComplianceBatchAgent on 2026-07-10 18:16:44 UTC._
+_Last reviewed by CodeComplianceBatchAgent on 2026-07-21 16:38:06 UTC._
 
-**Reliability score: 90/100 (High)**
-- **Breaking risk:** Change is limited to the Go toolchain directive (1.25.11 → 1.25.12), a patch-level bump. Point releases of Go maintain backward compatibility; the two included fixes are for os.Root symlink handling and TLS ECH client-hello encoding, neither of which is used by this cache library.
-- **Likely bugs:** Very unlikely. No application code, no direct or indirect dependency versions, and no lockfile hashes changed — only two lines in go.mod files.
-- **Reliability:** High. Unit tests in pkg/snowflake-cache pass under the new toolchain. Integration tests require live Snowflake credentials and could not be exercised here; example-service cannot be built here because its replace directive points at a sibling ../../db-cache repo absent from this checkout (pre-existing).
+**Reliability score: 78/100 (Moderate)**
+- **Breaking risk:** Root-module upgrades are all patch/minor and the unit test suite passes, so risk in the library itself is low. In example-service, its go.mod/go.sum were edited by hand because a local replace directive (../../db-cache) prevented running go mod tidy — hashes and versions were copied from the root module, but this was not validated by an actual go build inside that submodule.
+- **Likely bugs:** Most likely surfaces would be aws-sdk-go-v2 signin/sso minor bumps changing an interface surface consumed by example-service, or klauspost/compress v1.19 behavior differences under s3 chunked uploads. golang.org/x/net v0.57 has occasionally shipped HTTP/2 flow-control changes; unlikely to matter for this repo's usage but worth a smoke test.
+- **Reliability:** Root module builds and its unit tests pass cleanly. example-service could not be validated in this environment (missing sibling repo referenced by a local replace), which is why confidence isn't higher. Integration tests could not run because Snowflake credentials aren't provisioned here.
 
 **Recommendations**
 
-- Run the integration test suite (make test-integration) in an environment where SNOWFLAKE_PRIVATE_KEY / SNOWFLAKE_PRIVATE_KEY_PATH is provisioned to confirm end-to-end connectivity with Go 1.25.12.
-- Provision the sibling github.com/transactrx/db-cache repo in CI so example-service can be built and vulnerability-scanned as part of PR checks.
-- Consider dropping the openpgp advisory noise by ensuring no transitive dep pulls in x/crypto/openpgp (currently confirmed unused via grep).
+- Run `go mod tidy` inside example-service on a workstation that has the sibling db-cache repo checked out, and confirm the manifest matches what was committed.
+- Add a CI job that builds example-service against a stubbed or vendored db-cache so future dep bumps validate both modules automatically.
+- Provide (or mock) Snowflake credentials in CI so integration-tests/snowflake actually exercises the upgraded gosnowflake/pgx paths.
 <!-- code-compliance-agent:end -->
