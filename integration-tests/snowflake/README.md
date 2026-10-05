@@ -230,10 +230,9 @@ TO ROLE BATCHJOB_RW_DEV;
 
 ### Fallback Behavior
 
-If the REGISTERCACHETABLE call initiated by the Go code fails (e.g., procedure doesn't exist, insufficient privileges), the cache will:
-- **Still work** - All cache operations function normally
-- **Log a warning** - You'll know stream registration failed
-- **Require manual refresh** - You'll need to call `cache.ForceRefresh()` when data changes
+If the REGISTERCACHETABLE call initiated by the Go code fails (e.g., the source table doesn't exist, insufficient privileges), `CreateCache` **returns an error** naming the table and Snowflake's reason, and no cache is created. Older procedures that return `'Table Registration Failed = ...'` instead of raising are treated the same way.
+
+To run without stream registration on purpose, set `DB_CACHE_SF_REGISTER_STREAMS=false`; the cache then refreshes only on `ForceRefresh()` and the max-age reload (default 24h).
 
 ### Requirements for Automatic Stream Registration
 
