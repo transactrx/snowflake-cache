@@ -3,7 +3,9 @@ package snowflakecache
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"os"
 	"reflect"
@@ -142,7 +144,17 @@ type DbCache[T any] interface {
 	// handler is not invoked for the initial synchronous load. A nil handler
 	// disables the callback.
 	OnRefreshError(handler func(err error, consecutiveFailures int))
+	// SetMaxAge sets the longest the cache may go without a full reload, whatever
+	// CACHE_LOG says. It guards against a dead Snowflake stream, which leaves
+	// CACHE_LOG unchanged forever. Defaults to DefaultMaxAge; 0 (or a negative
+	// value) disables it. Checked on each poll, so the real age can reach
+	// maxAge + the check interval.
+	SetMaxAge(maxAge time.Duration)
 }
+
+// DefaultMaxAge is how long a cache may go without a full reload before the
+// background poller reloads it even though CACHE_LOG reports no change.
+const DefaultMaxAge = 24 * time.Hour
 
 // SnowflakeTable identifies a table in Snowflake by schema and name.
 // It is used to list which tables should invalidate the cache when they change.
@@ -176,6 +188,17 @@ type dbCache[T any] struct {
 	// refresh failures (reset to 0 on success). Both are guarded by mutex.
 	refreshErrHandler          func(err error, consecutiveFailures int)
 	consecutiveRefreshFailures int
+
+	// maxAge is the max-age safety net (see SetMaxAge). lastLoad is when the load
+	// SQL last actually ran, tracked by the cache itself rather than read from
+	// CACHE_LOG, because a dead stream is exactly when CACHE_LOG stops moving.
+	// dataHash is an order-insensitive hash of the last loaded rows, used to spot
+	// a max-age reload that finds new data CACHE_LOG never reported. All three
+	// are guarded by mutex.
+	maxAge   time.Duration
+	lastLoad time.Time
+	dataHash uint64
+	hashOK   bool
 }
 
 // Get returns the cached slice associated with the given key, or nil if missing.
@@ -199,17 +222,24 @@ func (c *dbCache[T]) GetAll() []T {
 	return result
 }
 
-// ForceRefresh clears the last fingerprint and forces a reload at once.
+// ForceRefresh reloads at once, whatever the fingerprint says.
 func (c *dbCache[T]) ForceRefresh() error {
-	c.mutex.Lock()
-	c.staleCheckVal = nil
-	c.mutex.Unlock()
-
 	fp, err := c.getDbStaleCheckValue()
 	if err != nil {
 		return err
 	}
-	return c.loadCache(fp)
+	_, err = c.reload(fp)
+	return err
+}
+
+// SetMaxAge sets the max-age safety net (see the DbCache interface).
+func (c *dbCache[T]) SetMaxAge(maxAge time.Duration) {
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	c.mutex.Lock()
+	c.maxAge = maxAge
+	c.mutex.Unlock()
 }
 
 // OnRefreshError registers a handler invoked after each failed background refresh
@@ -293,44 +323,95 @@ func (c *dbCache[T]) getDbStaleCheckValue() (*string, error) {
 	return nil, fmt.Errorf("fingerprint query returned NULL")
 }
 
-// loadCache executes the load SQL, rebuilds the in-memory index, and
-// stores the new fingerprint.
+// loadCache reloads only when the fingerprint differs from the last one seen.
 func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
-	if c.staleCheckVal != nil && *c.staleCheckVal == *staleCheckVal {
+	c.mutex.RLock()
+	unchanged := c.staleCheckVal != nil && staleCheckVal != nil && *c.staleCheckVal == *staleCheckVal
+	c.mutex.RUnlock()
+	if unchanged {
 		c.logger.Printf("Cache is already up to date..")
 		return nil
 	}
+	_, err := c.reload(staleCheckVal)
+	return err
+}
+
+// reload executes the load SQL, rebuilds the in-memory index, stores the new
+// fingerprint and restarts the max-age clock. It reports whether the loaded rows
+// differ from the previous load (false when either hash is unavailable).
+func (c *dbCache[T]) reload(staleCheckVal *string) (bool, error) {
 	c.logger.Printf("Loading cache %s by %s\n", c.monitoredTables, c.keyField)
 
 	var result []T
 	if err := sqlscan.Select(context.Background(), c.db.(*sql.DB), &result, c.loadSQL, c.sqlParameters...); err != nil {
-		return err
+		return false, err
 	}
 
 	newMap := make(map[string][]T)
 	for _, row := range result {
 		key, err := extractKeyValue(row, c.keyField)
 		if err != nil {
-			return err
+			return false, err
 		}
 		newMap[key] = append(newMap[key], row)
 	}
+	hash, hashOK := rowsHash(result)
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+	changed := c.hashOK && hashOK && c.dataHash != hash
 	c.keyCache = newMap
 	c.staleCheckVal = staleCheckVal
-	return nil
+	c.lastLoad = time.Now()
+	c.dataHash, c.hashOK = hash, hashOK
+	return changed, nil
+}
+
+// rowsHash returns an order-insensitive hash of the rows (the load SQL need not
+// have an ORDER BY). ok is false when a row can't be encoded.
+func rowsHash[T any](rows []T) (sum uint64, ok bool) {
+	for _, row := range rows {
+		b, err := json.Marshal(row)
+		if err != nil {
+			return 0, false
+		}
+		h := fnv.New64a()
+		h.Write(b)
+		sum += h.Sum64()
+	}
+	return sum, true
 }
 
 // refreshOnce performs a single staleness check followed by a conditional reload.
-// It is the unit of work executed by the background poller on every tick.
+// It is the unit of work executed by the background poller on every tick. When
+// the cache has gone longer than maxAge without a reload it reloads regardless of
+// the fingerprint; if that reload finds new data while the fingerprint never
+// moved, the stream behind CACHE_LOG is not reporting changes and a warning is
+// logged.
 func (c *dbCache[T]) refreshOnce() error {
 	staleCheckVal, err := c.getDbStaleCheckValue()
 	if err != nil {
 		return err
 	}
-	return c.loadCache(staleCheckVal)
+
+	c.mutex.RLock()
+	maxAge, lastLoad, prev := c.maxAge, c.lastLoad, c.staleCheckVal
+	c.mutex.RUnlock()
+
+	if maxAge <= 0 || lastLoad.IsZero() || time.Since(lastLoad) < maxAge {
+		return c.loadCache(staleCheckVal)
+	}
+
+	fingerprintUnchanged := prev != nil && staleCheckVal != nil && *prev == *staleCheckVal
+	c.logger.Printf("max-age reload: cache %s last loaded %s ago (max age %s)", c.monitoredTables, time.Since(lastLoad).Round(time.Second), maxAge)
+	changed, err := c.reload(staleCheckVal)
+	if err != nil {
+		return err
+	}
+	if fingerprintUnchanged && changed {
+		c.logger.Printf("WARNING: max-age reload of %s found new data but CACHE_LOG never reported a change; the Snowflake stream for these tables is likely stale or broken (see DB_CACHE.CACHE_MONITOR)", c.monitoredTables)
+	}
+	return nil
 }
 
 // noteRefreshResult records the outcome of a background refresh. A nil error resets
@@ -554,6 +635,12 @@ func generateStaleCheckSQL(monitoredTables []string) string {
 // registerStreamsForTables calls the Snowflake REGISTERCACHETABLE procedure
 // for each monitored table, to create per-table Streams used by the heartbeat.
 // Procedure signature: REGISTERCACHETABLE(DB_NAME, SCHEMA_NAME, TABLE_NAME)
+//
+// Any failure is returned, so the cache is never created without a working change
+// signal (it would load once and then never refresh). Older procedures report a
+// failure as a 'Table Registration Failed = ...' result instead of raising; both
+// forms are errors here. Set DB_CACHE_SF_REGISTER_STREAMS=false to skip
+// registration deliberately.
 func registerStreamsForTables(db *sql.DB, logger *log.Logger, logDatabase, logSchema string, tables []SnowflakeTable) error {
 	if logSchema == "" {
 		return nil
@@ -584,12 +671,12 @@ func registerStreamsForTables(db *sql.DB, logger *log.Logger, logDatabase, logSc
 		row := db.QueryRowContext(ctx, call, database, schema, table)
 		var result string
 		if err := row.Scan(&result); err != nil {
-			logger.Printf("warning: could not register stream for %s.%s.%s via %s: %v (continuing without auto-refresh)", database, schema, table, procFQN, err)
-		} else if strings.Contains(result, "Failed") {
-			logger.Printf("warning: stream registration failed for %s.%s.%s: %s (continuing without auto-refresh)", database, schema, table, result)
-		} else {
-			logger.Printf("registered stream for %s.%s.%s via %s", database, schema, table, procFQN)
+			return fmt.Errorf("stream registration failed for %s.%s.%s via %s: %w (set DB_CACHE_SF_REGISTER_STREAMS=false to skip registration)", database, schema, table, procFQN, err)
 		}
+		if strings.Contains(result, "Failed") {
+			return fmt.Errorf("stream registration failed for %s.%s.%s via %s: %s (set DB_CACHE_SF_REGISTER_STREAMS=false to skip registration)", database, schema, table, procFQN, result)
+		}
+		logger.Printf("registered stream for %s.%s.%s via %s", database, schema, table, procFQN)
 	}
 	return nil
 }
@@ -672,6 +759,7 @@ func CreateSnowflakeCacheQualified[T any](
 		fingerprintTableNames: fqnTables,
 		logger:                logger,
 		keyCache:              make(map[string][]T),
+		maxAge:                DefaultMaxAge,
 	}
 	cache.logSchema = logSchema
 	cache.logDatabase = logDatabase

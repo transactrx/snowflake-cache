@@ -11,6 +11,8 @@ A lightweight, in-memory cache library for Snowflake databases that automaticall
 - ✅ **Background polling** for automatic refresh
 - ✅ **Stream registration support** for Snowflake Streams + Tasks
 - ✅ **Fail-closed hook** (`OnRefreshError`) to halt on persistent refresh failure
+- ✅ **Fail-fast registration** - `CreateCache` returns an error if stream registration fails
+- ✅ **Max-age safety net** - full reload at least every 24h (`SetMaxAge`), with a warning when the stream missed changes
 
 ## Quick Start
 
@@ -77,19 +79,18 @@ CREATE TABLE IF NOT EXISTS MY_DATABASE.DB_CACHE.CACHE_LOG (
 Cache invalidation is handled automatically via Snowflake Streams + Task. The library handles most of this for you:
 
 **What the library does automatically:**
-- The library automatically creates Streams for your monitored tables on first cache creation (enabled by default)
+- The library automatically creates Streams for your monitored tables on first cache creation (enabled by default). **If registration fails, `CreateCache` returns an error** naming the table and Snowflake's reason; a cache is never created without a working change signal.
 - The database used for CACHE_LOG and REGISTERCACHETABLE is the same database as your monitored tables
 - The library validates that the `DB_CACHE` schema and `REGISTERCACHETABLE` procedure exist before creating the cache
-- To disable automatic stream registration, set `export DB_CACHE_SF_REGISTER_STREAMS=false`
+- To skip stream registration deliberately, set `export DB_CACHE_SF_REGISTER_STREAMS=false` (the cache then only refreshes on `ForceRefresh()` and the max-age reload)
 
 **What you need to set up once (infrastructure):**
 > **Note**: The RAS DATA Science Team has already set this up for our users. You only need to set this up if you're using this library outside of the RAS environment.
 
 1. Create the `DB_CACHE` schema and `CACHE_LOG` table (see above)
-2. Create the `REGISTERCACHETABLE` procedure and `HEARTBEAT` procedure
-3. Create and start the `HEARTBEAT_TASK` to run the HEARTBEAT procedure on a schedule
+2. Create the `REGISTERCACHETABLE` / `UNREGISTERCACHETABLE` procedures. In the RAS environment these, plus the daily `CACHE_MONITOR` task, come from the `create-dbcache` module in `ras-datawarehouse-foundation`.
 
-**Important**: Once set up, CACHE_LOG is updated automatically by the HEARTBEAT Task. You should never manually insert into CACHE_LOG from your application code.
+**Important**: Once set up, `REGISTERCACHETABLE` creates a Stream and a triggered task per monitored table; the task updates `CACHE_LOG` when the table changes. You should never manually insert into CACHE_LOG from your application code.
 
 See `integration-tests/snowflake/README.md` for detailed setup instructions.
 
@@ -128,6 +129,7 @@ type DbCache[T any] interface {
     GetAll() []T                   // Get all cached items
     ForceRefresh() error          // Force immediate cache refresh
     OnRefreshError(handler func(err error, consecutiveFailures int)) // Observe background-refresh failures
+    SetMaxAge(maxAge time.Duration) // Max time between full reloads (default 24h; 0 disables)
 }
 ```
 
@@ -152,6 +154,28 @@ cache.OnRefreshError(func(err error, consecutiveFailures int) {
   load (constructor errors are returned to the caller instead).
 - Register it immediately after `CreateCache`. A nil handler disables the callback.
 
+### SetMaxAge (safety net for a dead stream)
+
+The cache normally reloads only when `CACHE_LOG` changes. If the Snowflake stream behind a table
+goes stale or breaks, `CACHE_LOG` never changes again and the cache would serve old data forever.
+So the background poller also reloads once the cache is older than its max age, **24h by default**
+(`DefaultMaxAge`), whatever `CACHE_LOG` says:
+
+```go
+cache.SetMaxAge(6 * time.Hour) // shorter for caches where stale data does harm
+cache.SetMaxAge(0)             // disable (deliberate opt-out)
+```
+
+- The clock is the cache's own last-reload time (initial load, `CACHE_LOG` change, `ForceRefresh`,
+  or a max-age reload), never `CACHE_LOG`'s timestamp.
+- It is checked on each poll, so the real age can reach max age + the check interval.
+- A max-age reload reads the source tables directly, so it serves correct data even with a dead
+  stream. It does not repair the stream (`DB_CACHE.CACHE_MONITOR` does).
+- If a max-age reload finds different data while `CACHE_LOG` never moved, it logs
+  `WARNING: max-age reload of [...] found new data but CACHE_LOG never reported a change` -
+  evidence the stream is stale or broken.
+- A failed max-age reload goes through `OnRefreshError` like any background refresh.
+
 ## Examples
 
 See `cmd/example/` for complete examples.
@@ -164,7 +188,7 @@ See `integration-tests/snowflake/` for integration tests and detailed setup inst
 
 | Variable | Values | Default | Description |
 |----------|--------|---------|-------------|
-| `DB_CACHE_SF_REGISTER_STREAMS` | `true`, `false` | `true` | Enable/disable automatic stream registration |
+| `DB_CACHE_SF_REGISTER_STREAMS` | `true`, `false` | `true` | Enable/disable automatic stream registration. When enabled, a registration failure makes `CreateCache` return an error. |
 
 ## License
 
