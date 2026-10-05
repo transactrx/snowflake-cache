@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	sf "github.com/snowflakedb/gosnowflake"
+	sf "github.com/snowflakedb/gosnowflake/v2"
 
 	"github.com/transactrx/snowflake-cache/example-service/config"
 	"github.com/transactrx/snowflake-cache/example-service/models"
