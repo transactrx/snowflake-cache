@@ -11,6 +11,7 @@ A lightweight, in-memory cache library for Snowflake databases that automaticall
 - ✅ **Background polling** for automatic refresh
 - ✅ **Stream registration support** for Snowflake Streams + Tasks
 - ✅ **Fail-closed hook** (`OnRefreshError`) to halt on persistent refresh failure
+- ✅ **Dynamic rows** - cache `map[string]any` rows when the table structure isn't known at compile time
 
 ## Quick Start
 
@@ -114,11 +115,37 @@ func CreateCache[T any](
 - `logger`: Optional logger (nil uses default)
 - `SQL`: SELECT query to load cached data
 - `monitoredTables`: Table names to monitor (e.g., `[]string{"API_KEYS"}`)
-- `keyField`: Struct field name used as cache key (must be string, *string, or numeric types)
+- `keyField`: Struct field, or query result column when using maps, used as the cache key.
+  Values must be strings, numeric types, or pointers to those types.
 - `cacheCheckInterval`: How often to poll CACHE_LOG for changes
 - `DB`: Snowflake *sql.DB connection
 - `DB_RW`: String in "SCHEMA" or "DATABASE.SCHEMA" format (specifies default database+schema for monitored tables; CACHE_LOG uses the DB_CACHE schema in the same database)
 - `SQLParams`: Optional query parameters
+
+### CreateCacheWithRowsLoader
+
+```go
+type RowsLoader[T any] func(rows *sql.Rows) ([]T, error)
+
+func CreateCacheWithRowsLoader[T any](
+    logger *log.Logger,
+    query string,
+    monitoredTables []string,
+    keyField string,
+    cacheCheckInterval time.Duration,
+    connection *sql.DB,
+    schema string, // "SCHEMA" or "DATABASE.SCHEMA"
+    rowsLoader RowsLoader[T],
+    sqlParams ...any,
+) (DbCache[T], error)
+```
+
+Same as `CreateCache`, except the load query's result set is passed to `rowsLoader` instead of being
+mapped by sqlscan. The loader has access to `rows.ColumnTypes()`, so it can pick Go types per column; for
+example, when scanning into map rows the Snowflake driver returns `NUMBER` columns as strings, which a loader
+can scan as `int64` instead.
+The cache closes `rows` and checks `rows.Err()` after the loader returns. A nil `rowsLoader` behaves like
+`CreateCache`.
 
 ### DbCache Interface
 
@@ -150,7 +177,80 @@ cache.OnRefreshError(func(err error, consecutiveFailures int) {
   resets to 0 on the next successful refresh.
 - The handler is invoked from the background poller only — **not** for the initial synchronous
   load (constructor errors are returned to the caller instead).
-- Register it immediately after `CreateCache`. A nil handler disables the callback.
+- Register it immediately after creating the cache. A nil handler disables the callback.
+
+## Dynamic Rows
+
+When the row shape isn't known at compile time, use `map[string]any` (or a named map type such as
+`type Row map[string]any`) as `T`. Each row maps column name to value, and `keyField` names the key column,
+matched case-insensitively (`"user_id"` matches Snowflake's `USER_ID`).
+
+```go
+cache, err := snowflakecache.CreateCache[map[string]any](
+    nil,
+    "SELECT * FROM MY_DATABASE.MY_SCHEMA.API_KEYS",
+    []string{"API_KEYS"},
+    "user_id",       // key column
+    5*time.Second,
+    db,
+    "MY_DATABASE.MY_SCHEMA",
+)
+rows := cache.Get("user1") // []map[string]any, keys are column names as returned (e.g. "USER_ID")
+```
+
+When scanning into map rows, the Snowflake driver returns `NUMBER` columns as strings. To keep their real
+types, use `CreateCacheWithRowsLoader` with a loader that picks Go types from the column metadata:
+
+```go
+func typedRowMaps(rows *sql.Rows) ([]map[string]any, error) {
+    cols, err := rows.Columns()
+    if err != nil {
+        return nil, err
+    }
+    colTypes, err := rows.ColumnTypes()
+    if err != nil {
+        return nil, err
+    }
+    var result []map[string]any
+    for rows.Next() {
+        values := make([]any, len(cols))
+        for i, ct := range colTypes {
+            if _, scale, ok := ct.DecimalSize(); ct.DatabaseTypeName() == "FIXED" && ok && scale == 0 {
+                values[i] = &sql.NullInt64{}
+            } else {
+                values[i] = &sql.NullString{}
+            }
+        }
+        if err := rows.Scan(values...); err != nil {
+            return nil, err
+        }
+        row := make(map[string]any, len(cols))
+        for i, col := range cols {
+            switch v := values[i].(type) {
+            case *sql.NullInt64:
+                if v.Valid {
+                    row[col] = v.Int64
+                } else {
+                    row[col] = nil
+                }
+            case *sql.NullString:
+                if v.Valid {
+                    row[col] = v.String
+                } else {
+                    row[col] = nil
+                }
+            }
+        }
+        result = append(result, row)
+    }
+    return result, nil
+}
+
+cache, err := snowflakecache.CreateCacheWithRowsLoader[map[string]any](
+    nil, "SELECT * FROM MY_DATABASE.MY_SCHEMA.API_KEYS", []string{"API_KEYS"}, "id",
+    5*time.Second, db, "MY_DATABASE.MY_SCHEMA", typedRowMaps)
+rows := cache.Get("42") // numeric keys are looked up by their string form
+```
 
 ## Examples
 

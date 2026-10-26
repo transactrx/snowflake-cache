@@ -176,7 +176,12 @@ type dbCache[T any] struct {
 	// refresh failures (reset to 0 on success). Both are guarded by mutex.
 	refreshErrHandler          func(err error, consecutiveFailures int)
 	consecutiveRefreshFailures int
+
+	rowsLoader RowsLoader[T]
 }
+
+// RowsLoader converts a result set into cache rows of type T.
+type RowsLoader[T any] func(rows *sql.Rows) ([]T, error)
 
 // Get returns the cached slice associated with the given key, or nil if missing.
 func (c *dbCache[T]) Get(key string) []T {
@@ -303,7 +308,12 @@ func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
 	c.logger.Printf("Loading cache %s by %s\n", c.monitoredTables, c.keyField)
 
 	var result []T
-	if err := sqlscan.Select(context.Background(), c.db.(*sql.DB), &result, c.loadSQL, c.sqlParameters...); err != nil {
+	if c.rowsLoader != nil {
+		var err error
+		if result, err = c.loadRowsWithLoader(); err != nil {
+			return fmt.Errorf("failed to load cache: %w", err)
+		}
+	} else if err := sqlscan.Select(context.Background(), c.db.(*sql.DB), &result, c.loadSQL, c.sqlParameters...); err != nil {
 		return err
 	}
 
@@ -321,6 +331,26 @@ func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
 	c.keyCache = newMap
 	c.staleCheckVal = staleCheckVal
 	return nil
+}
+
+// loadRowsWithLoader executes the load SQL and hands the result set to the configured rowsLoader.
+func (c *dbCache[T]) loadRowsWithLoader() ([]T, error) {
+	rows, err := c.db.(*sql.DB).QueryContext(context.Background(), c.loadSQL, c.sqlParameters...)
+	if err != nil {
+		return nil, fmt.Errorf("load query failed: %w", err)
+	}
+	defer rows.Close()
+
+	result, err := c.rowsLoader(rows)
+	if err != nil {
+		return nil, fmt.Errorf("rows loader returned an error: %w", err)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read query rows: %w", err)
+	}
+
+	return result, nil
 }
 
 // refreshOnce performs a single staleness check followed by a conditional reload.
@@ -365,7 +395,7 @@ func (c *dbCache[T]) noteRefreshResult(err error) {
 //   - logger: optional logger; when nil, a default logger to stdout is used
 //   - SQL: SELECT query to load the dataset of type T
 //   - monitoredTables: table names as "DB.SCHEMA.TABLE", "SCHEMA.TABLE", or plain "TABLE" (uses defaultSchema from DB_RW)
-//   - keyField: exported struct field name on T used as the cache key (string, *string, or numeric types)
+//   - keyField: field name on T, or query result column name when T is a map, used as the cache key
 //   - cacheCheckInterval: how frequently to poll DB_CACHE_LOG for changes
 //   - DB: must be a *sql.DB connection using the gosnowflake driver
 //   - DB_RW: for Snowflake, this should be a string in "SCHEMA" or "DATABASE.SCHEMA" format
@@ -427,6 +457,34 @@ func CreateCache[T any](
 	)
 }
 
+// CreateCacheWithRowsLoader is [CreateCache] with a rowsLoader that maps the load
+// query's result set to []T in place of [sqlscan]. If rowsLoader is nil, this function
+// behaves like [CreateCache].
+func CreateCacheWithRowsLoader[T any](logger *log.Logger, query string, monitoredTables []string, keyField string,
+	cacheCheckInterval time.Duration, connection *sql.DB, schema string, rowsLoader RowsLoader[T],
+	sqlParams ...any) (DbCache[T], error) {
+
+	if connection == nil {
+		return nil, fmt.Errorf("connection must not be nil")
+	}
+
+	// Parse default schema and optional database ("SCHEMA" or "DATABASE.SCHEMA")
+	defaultDatabase, defaultSchema, err := parseDatabaseSchema(schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse schema: %w", err)
+	}
+
+	// Normalize monitored tables into schema/table pairs and resolve database.
+	qualified, database, err := normalizeMonitoredTables(monitoredTables, defaultDatabase, defaultSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize monitored tables: %w", err)
+	}
+
+	return createSnowflakeCacheQualified[T](logger, connection, query, keyField, cacheCheckInterval,
+		strings.ToUpper(database), DefaultLogSchema, qualified, rowsLoader, sqlParams...,
+	)
+}
+
 // CreateSnowflakeCache constructs and starts a Snowflake-backed cache.
 // This function provides a convenient way to create a cache with a default schema.
 //
@@ -434,7 +492,7 @@ func CreateCache[T any](
 //   - logger: optional logger; when nil, a default logger to stdout is used
 //   - SQL: SELECT to load the dataset of type T
 //   - monitoredTables: names as "DB.SCHEMA.TABLE", "SCHEMA.TABLE", or plain "TABLE" (uses defaultSchema)
-//   - keyField: exported struct field name on T used as the cache key (string, *string, or numeric types)
+//   - keyField: field name on T, or query result column name when T is a map, used as the cache key
 //   - checkInterval: how frequently to poll DB_CACHE_LOG for changes
 //   - db: an initialized *sql.DB using the gosnowflake driver
 //   - signalSchema: ignored; DB_CACHE is always used for the cache schema
@@ -608,6 +666,14 @@ func CreateSnowflakeCacheQualified[T any](
 	monitoredTables []SnowflakeTable,
 	sqlParams ...any,
 ) (DbCache[T], error) {
+	return createSnowflakeCacheQualified[T](logger, db, loadSQL, keyField, checkInterval, logDatabase,
+		logSchema, monitoredTables, nil, sqlParams...)
+}
+
+func createSnowflakeCacheQualified[T any](logger *log.Logger, db any, loadSQL string, keyField string,
+	checkInterval time.Duration, logDatabase string, logSchema string, monitoredTables []SnowflakeTable,
+	rowsLoader RowsLoader[T], sqlParams ...any) (DbCache[T], error) {
+
 	if db == nil {
 		return nil, fmt.Errorf("db must not be nil")
 	}
@@ -672,6 +738,7 @@ func CreateSnowflakeCacheQualified[T any](
 		fingerprintTableNames: fqnTables,
 		logger:                logger,
 		keyCache:              make(map[string][]T),
+		rowsLoader:            rowsLoader,
 	}
 	cache.logSchema = logSchema
 	cache.logDatabase = logDatabase
@@ -705,9 +772,9 @@ func CreateSnowflakeCacheQualified[T any](
 	return cache, nil
 }
 
-// extractKeyValue returns a string value from the named exported struct field.
-// The field may be of type string, *string, or numeric types (int, uint, float).
-// When pointer, it must be non-nil.
+// extractKeyValue returns the string representation of the value in the named struct field,
+// or the map entry with that key.
+// Lookups are case-insensitive. Key field values may be strings, numeric types, or non-nil pointers to those types.
 func extractKeyValue(obj any, keyField string) (string, error) {
 	v := reflect.ValueOf(obj)
 	if v.Kind() == reflect.Pointer {
@@ -716,25 +783,49 @@ func extractKeyValue(obj any, keyField string) (string, error) {
 	if !v.IsValid() {
 		return "", fmt.Errorf("invalid value for key extraction")
 	}
-	if v.Kind() == reflect.Map {
-		return "", fmt.Errorf("map types are not supported for key extraction")
+
+	var f reflect.Value
+	switch v.Kind() {
+	case reflect.Map:
+		if v.Type().Key().Kind() != reflect.String {
+			return "", fmt.Errorf("map key must be of string type, got %s", v.Type().Key().Kind())
+		}
+		found := false
+		for _, mapKey := range v.MapKeys() {
+			if strings.EqualFold(mapKey.String(), keyField) {
+				val := v.MapIndex(mapKey).Interface()
+				if val == nil {
+					return "", fmt.Errorf("key field '%s' is nil", keyField)
+				}
+				f = reflect.ValueOf(val)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", fmt.Errorf("key field '%s' is not part of the query results", keyField)
+		}
+
+	case reflect.Struct:
+		// Find struct field by name, case-insensitive
+		t := v.Type()
+		found := false
+		for i := 0; i < t.NumField(); i++ {
+			sf := t.Field(i)
+			if strings.EqualFold(sf.Name, keyField) {
+				f = v.Field(i)
+				found = true
+				break
+			}
+		}
+		if !found || !f.IsValid() {
+			return "", fmt.Errorf("field '%s' not found on cached type", keyField)
+		}
+
+	default:
+		return "", fmt.Errorf("cached type must be a struct or string-keyed map, got %s", v.Kind())
 	}
 
-	// Find struct field by name, case-insensitive
-	t := v.Type()
-	var f reflect.Value
-	found := false
-	for i := 0; i < t.NumField(); i++ {
-		sf := t.Field(i)
-		if strings.EqualFold(sf.Name, keyField) {
-			f = v.Field(i)
-			found = true
-			break
-		}
-	}
-	if !found || !f.IsValid() {
-		return "", fmt.Errorf("field '%s' not found on cached type", keyField)
-	}
 	if f.Kind() == reflect.Pointer {
 		if f.IsNil() {
 			return "", fmt.Errorf("key field '%s' is nil", keyField)
