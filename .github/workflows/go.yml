@@ -15,12 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v7
       with:
-        go-version: '1.24'
+        go-version: '1.25'
 
     - name: Download dependencies
       run: go mod download
@@ -34,7 +34,7 @@ jobs:
         go test -v -race -cover -coverprofile=coverage.out
 
     - name: Upload coverage to artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: coverage-report
@@ -52,10 +52,10 @@ jobs:
   #     SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
   #     SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
   #   steps:
-  #   - uses: actions/checkout@v4
-  #   - uses: actions/setup-go@v4
+  #   - uses: actions/checkout@v7
+  #   - uses: actions/setup-go@v7
   #     with:
-  #       go-version: '1.24'
+  #       go-version: '1.25'
   #   - name: Run integration tests
   #     run: |
   #       cd integration-tests

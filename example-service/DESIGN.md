@@ -274,13 +274,13 @@ example-service/
 ```go
 module github.com/transactrx/snowflake-cache/example-service
 
-go 1.24
+go 1.25.0
 
 require (
     github.com/transactrx/snowflake-cache v0.0.0
     github.com/transactrx/db-cache v0.0.0
     github.com/jackc/pgx/v5 v5.7.5
-    github.com/snowflakedb/gosnowflake v1.17.0
+    github.com/snowflakedb/gosnowflake/v2 v2.3.0
 )
 
 // Use local versions during development
