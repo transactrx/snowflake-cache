@@ -152,9 +152,10 @@ The cache closes `rows` and checks `rows.Err()` after the loader returns. A nil 
 ```go
 type DbCache[T any] interface {
     Get(key string) []T           // Get cached items by key
-    GetAll() []T                   // Get all cached items
+    GetAll() []T                  // Get all cached items
     ForceRefresh() error          // Force immediate cache refresh
     OnRefreshError(handler func(err error, consecutiveFailures int)) // Observe background-refresh failures
+    Close()                       // Stop background refreshes
 }
 ```
 
@@ -178,6 +179,16 @@ cache.OnRefreshError(func(err error, consecutiveFailures int) {
 - The handler is invoked from the background poller only — **not** for the initial synchronous
   load (constructor errors are returned to the caller instead).
 - Register it immediately after creating the cache. A nil handler disables the callback.
+
+### Close
+
+Call `Close` when the cache is no longer needed. Each cache runs a background poller that holds a reference
+to it, so without `Close` the cache keeps polling and reloading, and is never garbage collected.
+
+- No new loads start after `Close`; a refresh already running finishes normally.
+- `ForceRefresh` returns `ErrCacheClosed`.
+- `Get` and `GetAll` keep returning the last loaded data.
+- `Close` is safe to call more than once and does not close the `*sql.DB` connection.
 
 ## Dynamic Rows
 

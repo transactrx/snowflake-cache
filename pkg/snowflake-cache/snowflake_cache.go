@@ -3,6 +3,7 @@ package snowflakecache
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -133,8 +134,14 @@ func ensureCacheSchemaAndProcedure(db *sql.DB, logDatabase, logSchema string) er
 // DbCache is the public interface that defines the contract for cache operations.
 // This interface is implemented by the Snowflake cache implementation.
 type DbCache[T any] interface {
+	// Get returns the cache entries stored under the string key provided. It will
+	// return the last loaded entry for such key when the cache has been closed
 	Get(string) []T
+	// GetAll returns a copy of the cache contents. It will return the last loaded data
+	// set if the cache has been closed
 	GetAll() []T
+	// ForceRefresh reloads cache contents. It returns ErrCacheClosed if the cache
+	// has been closed
 	ForceRefresh() error
 	// OnRefreshError registers a handler invoked after each failed background
 	// refresh, with the running count of consecutive failures (reset to 0 on the
@@ -142,7 +149,14 @@ type DbCache[T any] interface {
 	// handler is not invoked for the initial synchronous load. A nil handler
 	// disables the callback.
 	OnRefreshError(handler func(err error, consecutiveFailures int))
+	// Close stops background polling so no new cache loads start. An in-progress
+	// refresh finishes normally. Close is safe to call more than once and does
+	// not close the database connection.
+	Close()
 }
+
+// ErrCacheClosed indicates the cache has been closed.
+var ErrCacheClosed = errors.New("cache is closed")
 
 // SnowflakeTable identifies a table in Snowflake by schema and name.
 // It is used to list which tables should invalidate the cache when they change.
@@ -178,6 +192,8 @@ type dbCache[T any] struct {
 	consecutiveRefreshFailures int
 
 	rowsLoader RowsLoader[T]
+	closed     chan struct{}
+	closeOnce  sync.Once
 }
 
 // RowsLoader converts a result set into cache rows of type T.
@@ -206,6 +222,10 @@ func (c *dbCache[T]) GetAll() []T {
 
 // ForceRefresh clears the last fingerprint and forces a reload at once.
 func (c *dbCache[T]) ForceRefresh() error {
+	if c.isClosed() {
+		return ErrCacheClosed
+	}
+
 	c.mutex.Lock()
 	c.staleCheckVal = nil
 	c.mutex.Unlock()
@@ -215,6 +235,20 @@ func (c *dbCache[T]) ForceRefresh() error {
 		return err
 	}
 	return c.loadCache(fp)
+}
+
+// Close stops background polling (see the DbCache interface).
+func (c *dbCache[T]) Close() {
+	c.closeOnce.Do(func() { close(c.closed) })
+}
+
+func (c *dbCache[T]) isClosed() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
+	}
 }
 
 // OnRefreshError registers a handler invoked after each failed background refresh
@@ -739,6 +773,7 @@ func createSnowflakeCacheQualified[T any](logger *log.Logger, db any, loadSQL st
 		logger:                logger,
 		keyCache:              make(map[string][]T),
 		rowsLoader:            rowsLoader,
+		closed:                make(chan struct{}),
 	}
 	cache.logSchema = logSchema
 	cache.logDatabase = logDatabase
@@ -764,8 +799,19 @@ func createSnowflakeCacheQualified[T any](logger *log.Logger, db any, loadSQL st
 	// surfaced through any handler registered via OnRefreshError; the cache keeps
 	// serving the last successfully loaded data until a refresh succeeds.
 	go func() {
-		for range time.Tick(checkInterval) {
-			cache.noteRefreshResult(cache.refreshOnce())
+		ticker := time.NewTicker(checkInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cache.closed:
+				return
+			case <-ticker.C:
+				// A tick and Close can be ready together; don't start a load after Close.
+				if cache.isClosed() {
+					return
+				}
+				cache.noteRefreshResult(cache.refreshOnce())
+			}
 		}
 	}()
 

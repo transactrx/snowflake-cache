@@ -7,6 +7,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -69,7 +70,7 @@ func TestCreateSnowflakeCache_SingleTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSnowflakeCache failed: %v", err)
 	}
-	// Cache does not require explicit Close()
+	defer cache.Close()
 
 	// Assert cache contents
 	u1 := cache.Get("u1")
@@ -124,7 +125,7 @@ func TestSnowflakeCache_ForceRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSnowflakeCache failed: %v", err)
 	}
-	// Cache does not require explicit Close()
+	defer cache.Close()
 
 	// ForceRefresh should re-read fingerprint and reload
 	mock.ExpectQuery(regexp.QuoteMeta(fpQuery)).
@@ -466,6 +467,106 @@ func TestCreateCacheWithRowsLoader_NilLoader(t *testing.T) {
 	}
 	if len(cache.Get("u1")) != 1 || len(cache.GetAll()) != 2 {
 		t.Fatalf("expected sqlscan loading with a nil loader; got u1=%d all=%d", len(cache.Get("u1")), len(cache.GetAll()))
+	}
+}
+
+func TestSnowflakeCache_Close(t *testing.T) {
+	db, mock := newCacheMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta(loaderSQL)).WillReturnRows(loaderRows())
+
+	// A short interval so a running poller would refresh during the wait below; with no
+	// further queries expected, any refresh after Close would fail and reach the handler.
+	cache, err := CreateCacheWithRowsLoader[map[string]any](nil, loaderSQL, []string{"PUBLIC.API_KEYS"}, "id",
+		20*time.Millisecond, db, "MY_DB.PUBLIC", scanRowMaps)
+	if err != nil {
+		t.Fatalf("CreateCacheWithRowsLoader failed: %v", err)
+	}
+	var refreshFailures atomic.Int32
+	cache.OnRefreshError(func(err error, consecutiveFailures int) { refreshFailures.Add(1) })
+
+	cache.Close()
+	cache.Close() // safe to call again
+
+	time.Sleep(100 * time.Millisecond)
+	if n := refreshFailures.Load(); n != 0 {
+		t.Fatalf("expected no refreshes after Close, got %d failed refreshes", n)
+	}
+
+	if !errors.Is(cache.ForceRefresh(), ErrCacheClosed) {
+		t.Fatalf("expected ForceRefresh to return ErrCacheClosed after Close")
+	}
+
+	if len(cache.Get("42")) != 2 || len(cache.GetAll()) != 3 {
+		t.Fatalf("expected the last loaded data after Close; got 42=%d all=%d", len(cache.Get("42")), len(cache.GetAll()))
+	}
+}
+
+func TestSnowflakeCache_PollerRefreshes(t *testing.T) {
+	db, mock := newCacheMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta(loaderSQL)).WillReturnRows(loaderRows())
+
+	// The first background tick sees a new fingerprint and reloads.
+	expectFingerprint(mock, "fp2")
+	mock.ExpectQuery(regexp.QuoteMeta(loaderSQL)).
+		WillReturnRows(sqlmock.NewRows([]string{"ID", "NAME"}).AddRow(int64(99), "z"))
+
+	cache, err := CreateCacheWithRowsLoader[map[string]any](nil, loaderSQL, []string{"PUBLIC.API_KEYS"}, "id",
+		20*time.Millisecond, db, "MY_DB.PUBLIC", scanRowMaps)
+	if err != nil {
+		t.Fatalf("CreateCacheWithRowsLoader failed: %v", err)
+	}
+	defer cache.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for len(cache.Get("99")) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected the poller to reload the cache")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(cache.Get("42")) != 0 {
+		t.Fatalf("expected the reload to replace the previous data")
+	}
+}
+
+func TestSnowflakeCache_CloseDuringRefresh(t *testing.T) {
+	db, mock := newCacheMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta(loaderSQL)).WillReturnRows(loaderRows())
+	expectFingerprint(mock, "fp2")
+	mock.ExpectQuery(regexp.QuoteMeta(loaderSQL)).
+		WillReturnRows(sqlmock.NewRows([]string{"ID", "NAME"}).AddRow(int64(99), "z"))
+
+	// The second load (the refresh) blocks until released, so Close runs while it is in progress.
+	started := make(chan struct{})
+	release := make(chan struct{})
+	loads := 0
+	blockingLoader := func(rows *sql.Rows) ([]map[string]any, error) {
+		loads++
+		if loads == 2 {
+			close(started)
+			<-release
+		}
+		return scanRowMaps(rows)
+	}
+
+	cache, err := CreateCacheWithRowsLoader[map[string]any](nil, loaderSQL, []string{"PUBLIC.API_KEYS"}, "id",
+		time.Hour, db, "MY_DB.PUBLIC", blockingLoader)
+	if err != nil {
+		t.Fatalf("CreateCacheWithRowsLoader failed: %v", err)
+	}
+
+	refreshErr := make(chan error)
+	go func() { refreshErr <- cache.ForceRefresh() }()
+
+	<-started
+	cache.Close()
+	close(release)
+
+	if err := <-refreshErr; err != nil {
+		t.Fatalf("expected the in-progress refresh to finish normally, got %v", err)
+	}
+	if len(cache.Get("99")) != 1 {
+		t.Fatalf("expected the in-progress refresh to store its data")
 	}
 }
 
