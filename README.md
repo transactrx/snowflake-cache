@@ -265,7 +265,3 @@ See `integration-tests/snowflake/` for integration tests and detailed setup inst
 | Variable | Values | Default | Description |
 |----------|--------|---------|-------------|
 | `DB_CACHE_SF_REGISTER_STREAMS` | `true`, `false` | `true` | Enable/disable automatic stream registration |
-
-## License
-
-[Your License Here]
