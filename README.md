@@ -22,7 +22,7 @@ import (
     "database/sql"
     "log"
     "time"
-    _ "github.com/snowflakedb/gosnowflake" // register Snowflake driver
+    _ "github.com/snowflakedb/gosnowflake/v2" // register Snowflake driver
     snowflakecache "github.com/transactrx/snowflake-cache/pkg/snowflake-cache"
 )
 

@@ -15,7 +15,7 @@ import (
 	"encoding/pem"
 	"strings"
 
-	sf "github.com/snowflakedb/gosnowflake"
+	sf "github.com/snowflakedb/gosnowflake/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	snowflakecache "github.com/transactrx/snowflake-cache/pkg/snowflake-cache"
@@ -73,7 +73,7 @@ func getTestSnowflakeConnection() (*sql.DB, error) {
 
 	if host := os.Getenv("SNOWFLAKE_HOST"); host != "" {
 		cfg.Host = host
-		cfg.InsecureMode = strings.Contains(host, "localhost") || strings.Contains(host, ":")
+		cfg.DisableOCSPChecks = strings.Contains(host, "localhost") || strings.Contains(host, ":")
 	}
 
 	// Prefer key pair auth when a private key is provided
@@ -817,12 +817,12 @@ func unregisterCacheTableIfExists(t *testing.T, db *sql.DB, dbName, schema, tabl
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-    // Candidate procedure names: prefer exact quoted identifier first
-    procCandidates := []string{
-        fmt.Sprintf("%s.%s.\"UNREGISTERCACHETABLE\"", dbName, schema),
-        fmt.Sprintf("%s.%s.UNREGISTERCACHETABLE", dbName, schema),
-        fmt.Sprintf("%s.%s.unRegisterCacheTable", dbName, schema),
-    }
+	// Candidate procedure names: prefer exact quoted identifier first
+	procCandidates := []string{
+		fmt.Sprintf("%s.%s.\"UNREGISTERCACHETABLE\"", dbName, schema),
+		fmt.Sprintf("%s.%s.UNREGISTERCACHETABLE", dbName, schema),
+		fmt.Sprintf("%s.%s.unRegisterCacheTable", dbName, schema),
+	}
 
 	for _, procFQN := range procCandidates {
 		call := fmt.Sprintf("CALL %s(?, ?, ?)", procFQN)

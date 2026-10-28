@@ -90,10 +90,10 @@ SKIP_SNOWFLAKE_TESTS=true ./run_all_tests.sh
 
 ## Prerequisites
 
-- Go 1.24 or later
+- Go 1.25 or later
 - Go modules enabled
 - Snowflake account with appropriate permissions
-- Snowflake Go driver (`github.com/snowflakedb/gosnowflake`)
+- Snowflake Go driver (`github.com/snowflakedb/gosnowflake/v2`)
 
 ## Environment Variables
 
@@ -119,7 +119,7 @@ SKIP_SNOWFLAKE_TESTS=true ./run_all_tests.sh
 ### Snowflake Tests
 ```bash
 # Test connection manually
-go run -c 'package main; import _ "github.com/snowflakedb/gosnowflake"; func main() {}'
+go run -c 'package main; import _ "github.com/snowflakedb/gosnowflake/v2"; func main() {}'
 
 # Check environment variables
 env | grep SNOWFLAKE
@@ -167,7 +167,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v3
         with:
-          go-version: '1.24'
+          go-version: '1.25'
       - name: Run Snowflake tests
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
