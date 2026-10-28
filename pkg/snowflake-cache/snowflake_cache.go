@@ -173,7 +173,7 @@ type SnowflakeTable struct {
 // using the provided SQL and rebuilds an index of key -> []T.
 type dbCache[T any] struct {
 	mutex                 sync.RWMutex
-	db                    any
+	db                    *sql.DB
 	keyCache              map[string][]T
 	monitoredTables       []string
 	fingerprintTableNames []string
@@ -313,14 +313,14 @@ func (c *dbCache[T]) getDbStaleCheckValue() (*string, error) {
 
 	// Scan result
 	if len(c.monitoredTables) == 1 {
-		row := c.db.(*sql.DB).QueryRowContext(ctx, q, args...)
+		row := c.db.QueryRowContext(ctx, q, args...)
 		var v string
 		if err := row.Scan(&v); err != nil {
 			return nil, err
 		}
 		return &v, nil
 	}
-	row := c.db.(*sql.DB).QueryRowContext(ctx, q, args...)
+	row := c.db.QueryRowContext(ctx, q, args...)
 	var v sql.NullString
 	if err := row.Scan(&v); err != nil {
 		return nil, err
@@ -347,7 +347,7 @@ func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
 		if result, err = c.loadRowsWithLoader(); err != nil {
 			return fmt.Errorf("failed to load cache: %w", err)
 		}
-	} else if err := sqlscan.Select(context.Background(), c.db.(*sql.DB), &result, c.loadSQL, c.sqlParameters...); err != nil {
+	} else if err := sqlscan.Select(context.Background(), c.db, &result, c.loadSQL, c.sqlParameters...); err != nil {
 		return err
 	}
 
@@ -369,7 +369,7 @@ func (c *dbCache[T]) loadCache(staleCheckVal *string) error {
 
 // loadRowsWithLoader executes the load SQL and hands the result set to the configured rowsLoader.
 func (c *dbCache[T]) loadRowsWithLoader() ([]T, error) {
-	rows, err := c.db.(*sql.DB).QueryContext(context.Background(), c.loadSQL, c.sqlParameters...)
+	rows, err := c.db.QueryContext(context.Background(), c.loadSQL, c.sqlParameters...)
 	if err != nil {
 		return nil, fmt.Errorf("load query failed: %w", err)
 	}
@@ -764,7 +764,7 @@ func createSnowflakeCacheQualified[T any](logger *log.Logger, db any, loadSQL st
 	}
 
 	cache := &dbCache[T]{
-		db:                    db,
+		db:                    sfDB,
 		loadSQL:               loadSQL,
 		sqlParameters:         sqlParams,
 		keyField:              keyField,
