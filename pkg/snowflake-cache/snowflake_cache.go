@@ -430,7 +430,7 @@ func (c *dbCache[T]) noteRefreshResult(err error) {
 //   - SQL: SELECT query to load the dataset of type T
 //   - monitoredTables: table names as "DB.SCHEMA.TABLE", "SCHEMA.TABLE", or plain "TABLE" (uses defaultSchema from DB_RW)
 //   - keyField: field name on T, or query result column name when T is a map, used as the cache key
-//   - cacheCheckInterval: how frequently to poll DB_CACHE_LOG for changes
+//   - cacheCheckInterval: how frequently to poll DB_CACHE_LOG for changes; zero or negative disables polling
 //   - DB: must be a *sql.DB connection using the gosnowflake driver
 //   - DB_RW: for Snowflake, this should be a string in "SCHEMA" or "DATABASE.SCHEMA" format
 //   - SQLParams: optional bind parameters for the SQL query
@@ -527,7 +527,7 @@ func CreateCacheWithRowsLoader[T any](logger *log.Logger, query string, monitore
 //   - SQL: SELECT to load the dataset of type T
 //   - monitoredTables: names as "DB.SCHEMA.TABLE", "SCHEMA.TABLE", or plain "TABLE" (uses defaultSchema)
 //   - keyField: field name on T, or query result column name when T is a map, used as the cache key
-//   - checkInterval: how frequently to poll DB_CACHE_LOG for changes
+//   - checkInterval: how frequently to poll DB_CACHE_LOG for changes; zero or negative disables polling
 //   - db: an initialized *sql.DB using the gosnowflake driver
 //   - signalSchema: ignored; DB_CACHE is always used for the cache schema
 //   - defaultSchema: schema applied to unqualified monitored table names (can be "DATABASE.SCHEMA")
@@ -793,6 +793,11 @@ func createSnowflakeCacheQualified[T any](logger *log.Logger, db any, loadSQL st
 	}
 	if err := cache.loadCache(fp); err != nil {
 		return nil, fmt.Errorf("failed to perform initial load: %w", err)
+	}
+
+	// A non-positive interval indicates that automatic refreshing is not desired.
+	if checkInterval <= 0 {
+		return cache, nil
 	}
 
 	// Start background poller for automatic cache refresh. A persistent failure is
