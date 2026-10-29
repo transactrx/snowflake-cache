@@ -501,6 +501,36 @@ func TestSnowflakeCache_Close(t *testing.T) {
 	}
 }
 
+func TestSnowflakeCache_NonPositiveIntervalDisablesPolling(t *testing.T) {
+	for _, interval := range []time.Duration{0, -time.Second} {
+		t.Run(interval.String(), func(t *testing.T) {
+			db, mock := newCacheMock(t)
+			mock.ExpectQuery(regexp.QuoteMeta(loaderSQL)).WillReturnRows(loaderRows())
+
+			cache, err := CreateCacheWithRowsLoader[map[string]any](nil, loaderSQL, []string{"PUBLIC.API_KEYS"}, "id",
+				interval, db, "MY_DB.PUBLIC", scanRowMaps)
+			if err != nil {
+				t.Fatalf("CreateCacheWithRowsLoader failed: %v", err)
+			}
+			var refreshFailures atomic.Int32
+			cache.OnRefreshError(func(err error, consecutiveFailures int) { refreshFailures.Add(1) })
+
+			time.Sleep(50 * time.Millisecond)
+			if n := refreshFailures.Load(); n != 0 {
+				t.Fatalf("expected no background refreshes, got %d failed refreshes", n)
+			}
+			if len(cache.Get("42")) != 2 {
+				t.Fatalf("expected the initially loaded data, got 42=%d", len(cache.Get("42")))
+			}
+
+			cache.Close()
+			if !errors.Is(cache.ForceRefresh(), ErrCacheClosed) {
+				t.Fatalf("expected ForceRefresh to return ErrCacheClosed after Close")
+			}
+		})
+	}
+}
+
 func TestSnowflakeCache_PollerRefreshes(t *testing.T) {
 	db, mock := newCacheMock(t)
 	mock.ExpectQuery(regexp.QuoteMeta(loaderSQL)).WillReturnRows(loaderRows())
