@@ -81,7 +81,7 @@ func normalizeMonitoredTables(monitoredTables []string, defaultDatabase, default
 }
 
 func currentDatabase(db *sql.DB) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	row := db.QueryRowContext(ctx, "SELECT CURRENT_DATABASE()")
 	var name sql.NullString
@@ -95,7 +95,7 @@ func currentDatabase(db *sql.DB) (string, error) {
 }
 
 func ensureCacheSchemaAndProcedure(db *sql.DB, logDatabase, logSchema string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	dbName := strings.ToUpper(logDatabase)
